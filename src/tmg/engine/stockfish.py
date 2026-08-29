@@ -119,5 +119,12 @@ class StockfishAdapter:
         )
         candidates = candidates_from_infos(infos, mover=board.turn)
         if not candidates:
-            raise RuntimeError(f"engine returned no line for {move.uci()}")
+            # EngineError, not a bare RuntimeError: this is an engine-level
+            # failure, and the CLI's "every failure exits 2 with a message,
+            # never a traceback" contract is implemented by catching
+            # chess.engine.EngineError around the whole analysis. A RuntimeError
+            # walked straight through it and ended the run on a traceback.
+            raise chess.engine.EngineError(
+                f"engine returned no line for {move.uci()}"
+            )
         return candidates[0]

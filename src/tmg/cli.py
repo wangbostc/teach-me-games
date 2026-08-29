@@ -32,6 +32,24 @@ def _positive_int(text: str) -> int:
     return value
 
 
+def _read_first_two_games(pgn_path: Path, encoding: str):
+    """Read the first game, and peek for a second one, in a single open().
+
+    The peek happens while the handle is still open (a Lichess "export my
+    games" download is the most likely real multi-game input). A decode error
+    out there is a fault in trailing content past the game we can already use,
+    not in the game itself -- so it downgrades to "no more games" rather than
+    failing the run.
+    """
+    with pgn_path.open(encoding=encoding) as handle:
+        first = chess.pgn.read_game(handle)
+        try:
+            second = chess.pgn.read_game(handle)
+        except UnicodeDecodeError:
+            second = None
+        return first, second
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tmg", description=__doc__)
     parser.add_argument("pgn", help="path to a PGN file")
@@ -64,23 +82,30 @@ def main(argv: list[str] | None = None) -> int:
         # Explicit encoding: the default is locale-dependent, so a PGN with a
         # non-ASCII player name is unreadable under LANG=C (common in CI and
         # slim containers). "utf-8-sig" also tolerates a BOM.
-        with pgn_path.open(encoding="utf-8-sig") as handle:
-            game = chess.pgn.read_game(handle)
-            # Peek for a second game while the handle is still open (a Lichess
-            # "export my games" download is the most likely real multi-game
-            # input). A decode error out here is a fault in trailing content
-            # past the game we can already use, not in the game itself -- so
-            # it downgrades to "no more games" rather than failing the run.
-            try:
-                more_games = chess.pgn.read_game(handle)
-            except UnicodeDecodeError:
-                more_games = None
-            # A trailing non-PGN fragment also parses to a Game with
-            # placeholder "?" headers and zero moves rather than None -- same
-            # as the single-game case below -- so require actual moves before
-            # calling it a second game, or this would warn on every file with
-            # trailing whitespace or a stray comment.
-            has_more_games = more_games is not None and bool(more_games.mainline_moves())
+        try:
+            game, more_games = _read_first_two_games(pgn_path, "utf-8-sig")
+        except UnicodeDecodeError:
+            # UTF-8 is what Lichess and chess.com emit, but it is NOT what the
+            # PGN standard specifies: section 4.1 mandates ISO-8859-1, and the
+            # desktop tools that predate the web sites still write it. There
+            # "Bogoljubow" with its accent is a single 0xFA byte, which is not
+            # valid UTF-8 -- so a perfectly conformant PGN was refused outright
+            # as "could not parse".
+            #
+            # Latin-1 decodes ANY byte string, so the retry can never fail and
+            # cannot be trusted on its own: a binary file would silently become
+            # a zero-move "game". Accept it only when it actually yields moves,
+            # and otherwise re-raise so the genuine "this is not a PGN" case
+            # still reaches the handler below.
+            game, more_games = _read_first_two_games(pgn_path, "latin-1")
+            if game is None or not game.mainline_moves():
+                raise
+        # A trailing non-PGN fragment also parses to a Game with placeholder
+        # "?" headers and zero moves rather than None -- same as the
+        # single-game case below -- so require actual moves before calling it
+        # a second game, or this would warn on every file with trailing
+        # whitespace or a stray comment.
+        has_more_games = more_games is not None and bool(more_games.mainline_moves())
     except UnicodeDecodeError:
         print(f"error: could not parse PGN file: {pgn_path}", file=sys.stderr)
         return 2
@@ -100,7 +125,19 @@ def main(argv: list[str] | None = None) -> int:
     # placeholder "?" headers and zero moves. Treat that the same as "no game
     # found": it is not a usable annotation target either way.
     if game is None or not game.mainline_moves():
-        print(f"error: no game found in {pgn_path}", file=sys.stderr)
+        if has_more_games:
+            # An "export my games" download can lead with an aborted game (0
+            # moves). "no game found" is flatly wrong for a file that holds
+            # several playable ones, and leaves the reader with nothing to do
+            # about it -- say which game is empty, and that only the first is
+            # ever analysed.
+            print(
+                f"error: the first game in {pgn_path} has no moves, and tmg "
+                "analyses only the first game in a file",
+                file=sys.stderr,
+            )
+        else:
+            print(f"error: no game found in {pgn_path}", file=sys.stderr)
         return 2
 
     # A null move ("--", used in analysis PGNs to pass the turn) parses to
@@ -160,7 +197,20 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    if board.uci_variant != "chess" or board.chess960:
+    if board.chess960:
+        # Named explicitly rather than through the header: a 960 position can
+        # arrive with no [Variant] tag at all (python-chess infers it from the
+        # castling rights in the FEN), or even under [Variant "Standard"], and
+        # the header-derived message then read "is a chess game; tmg only
+        # analyses standard chess" -- self-contradictory, and nothing the
+        # reader can act on.
+        print(
+            f"error: {pgn_path} is a Chess960 game; "
+            "tmg only analyses standard chess",
+            file=sys.stderr,
+        )
+        return 2
+    if board.uci_variant != "chess":
         print(
             f"error: {pgn_path} is a "
             f"{game.headers.get('Variant') or board.uci_variant} game; "

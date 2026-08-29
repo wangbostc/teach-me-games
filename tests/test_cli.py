@@ -497,3 +497,105 @@ def test_cli_reports_an_engine_refusal_without_a_traceback(tmp_path, capsys, mon
     assert exit_code == 2
     assert "traceback" not in err.lower()
     assert "at most 500" in err
+
+
+def test_cli_reads_a_latin1_pgn_the_pgn_standard_specifies(tmp_path, capsys, monkeypatch):
+    # REGRESSION: the read path was strict UTF-8, but the PGN standard
+    # (section 4.1) specifies ISO-8859-1, and the desktop tools that predate
+    # Lichess still emit it. "Bogoljubow" with its accent is a single 0xFA
+    # byte there -- not valid UTF-8 -- so a perfectly conformant PGN was
+    # refused outright as "could not parse PGN file".
+    _fake_success(monkeypatch)
+
+    pgn_file = tmp_path / "latin1.pgn"
+    pgn_file.write_bytes(
+        '[Event "test"]\n[White "Bogolj\u00fabow"]\n[Black "Alekhine"]\n'
+        '[Result "1-0"]\n\n1. e4 e5 1-0\n'.encode("latin-1")
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 0, err
+    assert "could not parse" not in err.lower()
+
+
+def test_a_binary_file_is_still_rejected_and_not_rescued_by_the_latin1_retry(
+    tmp_path, capsys, monkeypatch
+):
+    # latin-1 decodes ANY byte string, so the retry can never fail on its own.
+    # Accepting it unconditionally would turn binary garbage into a silent
+    # zero-move "game"; it is only taken when it actually yields moves.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    pgn_file = tmp_path / "binary.pgn"
+    pgn_file.write_bytes(b"\xff\xfe\x00\x01binary garbage \x80\x81\x82")
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "could not parse" in err.lower()
+
+
+def test_chess960_from_a_fen_alone_is_named_chess960_not_chess(tmp_path, capsys, monkeypatch):
+    # REGRESSION: a 960 position can arrive with no [Variant] header at all --
+    # python-chess infers it from the castling rights in the FEN. The guard
+    # fired correctly but built its message from the header, so it read
+    # "is a chess game; tmg only analyses standard chess": self-contradictory,
+    # and nothing the reader can act on.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "headerless960.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n'
+        '[FEN "bqnbnrkr/pppppppp/8/8/8/8/PPPPPPPP/BQNBNRKR w HFhf - 0 1"]\n'
+        "\n1. g3 g6 *\n"
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "chess960" in err.lower()
+    assert "is a chess game" not in err.lower()
+
+
+def test_a_leading_aborted_game_is_not_reported_as_no_game_found(tmp_path, capsys, monkeypatch):
+    # An "export my games" download can lead with an aborted game (0 moves).
+    # "no game found" is flatly wrong for a file that holds several playable
+    # ones, and leaves the reader with nothing to do about it.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "aborted_first.pgn"
+    pgn_file.write_text(
+        '[Event "aborted"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n\n*\n\n'
+        + PGN
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "no game found" not in err.lower()
+    assert "has no moves" in err.lower()
+
+
+def test_analyse_move_with_no_engine_line_raises_an_engine_error(monkeypatch):
+    # REGRESSION: a bare RuntimeError walked straight through main()'s
+    # `except chess.engine.EngineError`, ending the run on a traceback and
+    # exit 1 instead of the exit-2-with-a-message contract.
+    import chess
+    import chess.engine
+
+    from tmg.engine.stockfish import StockfishAdapter
+
+    class _SilentEngine:
+        def analyse(self, board, limit, **kwargs):
+            return [{}]  # what python-chess returns when no info line arrived
+
+    adapter = StockfishAdapter()
+    adapter._engine = _SilentEngine()
+
+    with pytest.raises(chess.engine.EngineError, match="no line for"):
+        adapter.analyse_move(chess.Board(), chess.Move.from_uci("e2e4"))
