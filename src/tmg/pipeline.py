@@ -92,16 +92,29 @@ def _filter_violations(
     (color, rule) key -- and a later, genuinely engine-corroborated instance
     of the same rule for the same color would be silently dropped by a key an
     uncorroborated warning claimed. Corroborating first means only violations
-    that actually survive to the report can claim a key.
+    that actually survive to the report can claim a key. (For today's three
+    rules this ordering is vacuous -- nothing both needs corroboration and
+    dedupes -- but it stays correct if a future rule ever needs both, so it
+    is kept rather than simplified away.)
+
+    Dedup itself only applies to violations carrying `dedupe_per_game=True`
+    (today: only uncastled_late -- see principles.py's module docstring for
+    the standing-condition-vs-event distinction this encodes). A rule that
+    does NOT carry the flag (piece_left_en_prise, queen_out_early) is a
+    per-move event: a second genuine occurrence later in the game -- a
+    different piece hung, a second queen sortie after a retreat -- is new
+    information and must always be reported, however many times its rule
+    name has already fired for this color this game.
     """
     kept: list[Violation] = []
     for v in violations:
         if not _passes_corroboration(v, judgement, prev_cp, prev_mate, cur_cp, cur_mate):
             continue
-        key = (color, v.rule)
-        if key in seen_rule_keys:
-            continue
-        seen_rule_keys.add(key)
+        if v.dedupe_per_game:
+            key = (color, v.rule)
+            if key in seen_rule_keys:
+                continue
+            seen_rule_keys.add(key)
         kept.append(v)
     return tuple(kept)
 

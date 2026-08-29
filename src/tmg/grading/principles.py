@@ -29,6 +29,18 @@ which the classifier alone cannot do; and (b) coverage in the flat zone past
 +/-900 cp, where the win-probability sigmoid is saturated and `judgement`
 goes silent even though a real piece was just hung while up (or down) a
 rook. That is real, and it is the whole of it -- no more.
+
+`uncastled_late` needs per-game dedup (see `Violation.dedupe_per_game`) and
+the other rules do not, for the opposite reason from the corroboration
+split above: `uncastled_late` restates the same unchanged STANDING CONDITION
+("your king is still in the centre") every single ply once it starts firing,
+so showing it more than once teaches nothing new. `piece_left_en_prise` and
+`queen_out_early` are per-move EVENTS -- a second hung piece later in the
+game, or a second queen sortie after a retreat, is a second, genuinely new
+teaching moment, and deduplicating those by rule name alone would silently
+swallow it. One generic `(color, rule)` key cannot tell a standing condition
+from a recurring event apart; the two booleans on `Violation` let each rule
+declare which kind it is, and the pipeline stays generic on both.
 """
 from dataclasses import dataclass
 
@@ -58,6 +70,13 @@ class Violation:
     # only piece_left_en_prise). The pipeline gates on this field generically --
     # see the module docstring -- never on `rule` string-matching.
     needs_engine_corroboration: bool = False
+    # True only for rules describing a STANDING CONDITION that stays true
+    # every ply once it starts (today: only uncastled_late) -- the pipeline
+    # keeps just the first occurrence per (color, rule) per game for these.
+    # False (the default) for a per-move EVENT rule, where a second
+    # occurrence later in the game is new information and must survive.
+    # See the module docstring for why one flag can't cover both.
+    dedupe_per_game: bool = False
 
 
 def check_principles(board_before: chess.Board, move: chess.Move) -> list[Violation]:
@@ -112,6 +131,7 @@ def check_principles(board_before: chess.Board, move: chess.Move) -> list[Violat
                 "uncastled_late",
                 "Your king is still in the centre. Castling is usually the most "
                 "important move in the opening.",
+                dedupe_per_game=True,
             )
         )
 

@@ -270,6 +270,62 @@ def test_uncastled_late_violation_is_deduplicated_once_per_color_per_game():
     assert [v.rule for v in black_moves[1].violations] == []
 
 
+def test_two_genuine_hangs_by_the_same_color_are_both_reported():
+    # Scoped re-review's reproduction: the (color, rule) dedup Fix 2 added
+    # was, before this follow-up fix, applied generically to EVERY rule --
+    # including piece_left_en_prise, a per-move EVENT (a second hung piece is
+    # a second, genuinely new teaching moment), not a standing condition like
+    # uncastled_late. Reproduction fixture: White hangs a rook on ply 38
+    # (a1a6) and again on a DIFFERENT square on ply 40 (h1h6), both
+    # engine-corroborated BLUNDERs. Both must be reported; only the
+    # (unrelated) uncastled_late nag may be deduplicated between them.
+    board = chess.Board("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 20")
+    game = chess.pgn.Game.from_board(board)
+    node = game
+    for uci in ("a1a6", "a8a6", "h1h6", "h8h6"):
+        node = node.add_main_variation(chess.Move.from_uci(uci))
+
+    # Ply 38 (White a1a6) and ply 40 (White h1h6) each drop 200cp for White --
+    # comfortably a BLUNDER (>=100cp gate AND judgement is not None, either
+    # of which alone is enough to corroborate). Ply 39/41 (Black's
+    # recaptures) default to a flat 0/0 via ScriptedEngine's fallback --
+    # irrelevant to what this test checks.
+    engine = ScriptedEngine({
+        ("before", 38): 0, ("played", 38): -200,
+        ("before", 40): 0, ("played", 40): -200,
+    })
+    report = analyse_game(game, engine)
+
+    white_moves = [m for m in report.moves if m.color == "white"]
+    assert len(white_moves) == 2
+    assert white_moves[0].judgement == Judgement.BLUNDER
+    assert white_moves[1].judgement == Judgement.BLUNDER
+
+    # Both genuinely hang a piece -- piece_left_en_prise must survive on BOTH.
+    assert [v.rule for v in white_moves[0].violations] == [
+        "piece_left_en_prise", "uncastled_late",
+    ]
+    # The second occurrence still drops the DEDUPED uncastled_late (a
+    # standing condition, unchanged since ply 38), but keeps the EVENT rule.
+    assert [v.rule for v in white_moves[1].violations] == ["piece_left_en_prise"]
+
+
+def test_queen_sortie_retreat_second_sortie_reports_both_sorties():
+    # The same generic-dedup bug applies to queen_out_early: its window is
+    # move_number < 6, and it fires on the queen LEAVING the back rank -- a
+    # sortie, then a retreat (no fire -- the queen is coming home, not
+    # leaving), then a second sortie is a second, legitimate violation, not a
+    # repeat of the first.
+    game = _game("1. e4 e5 2. Qh5 Nc6 3. Qd1 Nf6 4. Qh5 *")
+    report = analyse_game(game, ScriptedEngine({}))
+
+    white_moves = [m for m in report.moves if m.color == "white"]
+    sortie_moves = [
+        m for m in white_moves if "queen_out_early" in [v.rule for v in m.violations]
+    ]
+    assert [m.san for m in sortie_moves] == ["Qh5", "Qh5"]
+
+
 class _WrongPvEngine:
     """Violates the Fix 3 seam contract on purpose: analyse_move's pv[0] is
     some other move, not the one actually played. Proves the pipeline.py
