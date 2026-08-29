@@ -66,6 +66,26 @@ def test_already_castled_player_is_not_flagged_for_uncastled():
     )
 
 
+def test_only_piece_left_en_prise_needs_engine_corroboration():
+    # Fix 1: the pipeline gates generically on this field rather than
+    # string-matching v.rule, so it matters that ONLY piece_left_en_prise
+    # carries it -- a rule that needed the gate but forgot to set it would be
+    # shown to a learner uncorroborated with no error anywhere.
+    board = chess.Board("4k3/8/8/r7/8/8/8/3RK3 w - - 0 1")
+    violations = check_principles(board, chess.Move.from_uci("d1d5"))
+    by_rule = {v.rule: v.needs_engine_corroboration for v in violations}
+    assert by_rule == {"piece_left_en_prise": True}
+
+
+def test_queen_out_early_and_uncastled_late_do_not_need_corroboration():
+    board = chess.Board(
+        "rnbqk2r/pppp1ppp/5n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 11"
+    )
+    violations = check_principles(board, chess.Move.from_uci("h1g1"))
+    assert violations
+    assert all(not v.needs_engine_corroboration for v in violations)
+
+
 def test_promotion_message_uses_promoted_piece_not_pawn():
     # Pawn promotes to queen on e8, where it's attacked by black rooks (not defended).
     # Message should say "queen", not "pawn".

@@ -6,6 +6,29 @@ opening principles, and the Stappenmethode Step 1 three-question checklist
 ("is one of my pieces in danger?").
 
 All messages use square names, never SAN: the curriculum defers notation.
+
+`piece_left_en_prise` needs engine corroboration (see `Violation.
+needs_engine_corroboration`) and the other rules do not. `is_en_prise` means
+"attacked and undefended" with no notion of whether the move was GOOD -- it
+fires on any capture into a recapture, one of the most common events in chess
+(book captures, sound sacrifices), not just on actual blunders. The pipeline
+gates this rule on the field, not on `v.rule` string-matching, so a future
+seventh rule added here does not silently need to remember an unrelated
+pipeline-level `if`.
+
+Honest accounting of what the gate (pipeline.py's `prev_cp - cur_cp >= 100`
+OR `judgement is not None`) actually buys, once corroboration is required:
+near equality the gate is STRICTLY WEAKER than `judgement is not None` alone,
+because genuinely hanging a piece (a raw drop of >=300cp) always trips at
+least Blunder from the win-probability classifier's own equality-region
+sensitivity anyway -- a >=100cp raw drop near cp=0 already crosses the
+Inaccuracy threshold on its own (see `grading/classify.py`), so `judgement
+is not None` alone would have caught it. The rule's independent contribution
+is therefore exactly two things: (a) naming WHICH piece, in plain language,
+which the classifier alone cannot do; and (b) coverage in the flat zone past
++/-900 cp, where the win-probability sigmoid is saturated and `judgement`
+goes silent even though a real piece was just hung while up (or down) a
+rook. That is real, and it is the whole of it -- no more.
 """
 from dataclasses import dataclass
 
@@ -30,6 +53,11 @@ _PIECE_WORDS = {
 class Violation:
     rule: str
     message: str
+    # True only for rules that are heuristics needing an engine's agreement that
+    # the move actually cost something before being shown to a learner (today:
+    # only piece_left_en_prise). The pipeline gates on this field generically --
+    # see the module docstring -- never on `rule` string-matching.
+    needs_engine_corroboration: bool = False
 
 
 def check_principles(board_before: chess.Board, move: chess.Move) -> list[Violation]:
@@ -54,6 +82,7 @@ def check_principles(board_before: chess.Board, move: chess.Move) -> list[Violat
                 "piece_left_en_prise",
                 f"Your {word} on {describe_square(move.to_square)} can be captured "
                 f"and nothing is defending it.",
+                needs_engine_corroboration=True,
             )
         )
 
