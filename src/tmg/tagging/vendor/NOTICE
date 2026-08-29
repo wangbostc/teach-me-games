@@ -1,0 +1,38 @@
+Vendored code notice
+=====================
+
+Files: cook.py, model.py, util.py
+
+Source:      https://github.com/ornicar/lichess-puzzler
+Subpath:     tagger/
+Commit:      8d9faff694ba3a8598abc5465347209af3f90a82
+Fetched:     2026-08-29
+License:     GNU Affero General Public License v3.0 (AGPL-3.0) -- see the
+             repository root LICENSE at that commit, and this project's own
+             LICENSE (this is why the whole project is AGPL-3.0; see
+             docs/PLAN.md section 11).
+
+These three files are vendored UNMODIFIED from the commit above -- verified
+byte-for-byte identical against
+https://raw.githubusercontent.com/ornicar/lichess-puzzler/<commit>/tagger/<file>
+for each of cook.py, model.py, and util.py on 2026-08-29.
+
+Why a pinned commit SHA, not `@master`: an earlier byte-identity check was
+made against `@master`, which is a moving target -- upstream can (and does)
+change master at any time, so that check was not reproducible by anyone,
+including whoever ran it. Pinning this exact commit SHA makes the claim
+"unmodified" a fact anyone can re-verify with the two commands above, not a
+statement about whatever master happened to contain on some unrecorded day.
+
+To re-verify:
+    curl -sf https://raw.githubusercontent.com/ornicar/lichess-puzzler/8d9faff694ba3a8598abc5465347209af3f90a82/tagger/cook.py  | diff - cook.py
+    curl -sf https://raw.githubusercontent.com/ornicar/lichess-puzzler/8d9faff694ba3a8598abc5465347209af3f90a82/tagger/model.py | diff - model.py
+    curl -sf https://raw.githubusercontent.com/ornicar/lichess-puzzler/8d9faff694ba3a8598abc5465347209af3f90a82/tagger/util.py  | diff - util.py
+
+To re-sync from a newer upstream commit: fetch the new SHA (e.g.
+`curl -sf https://api.github.com/repos/ornicar/lichess-puzzler/commits/master --jq .sha`),
+re-run the three commands above against it, replace the three files verbatim,
+and update the commit SHA and fetch date recorded in this NOTICE. See README.md
+in this directory for the import-shim details that must NOT be re-synced
+(cook.py/model.py/util.py are third-party; __init__.py and that README are
+this project's own integration glue).

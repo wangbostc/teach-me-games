@@ -8,6 +8,9 @@ boundary would limit copyleft propagating into our own code, but it does NOT
 extinguish the obligation attached to this code when the combined work is
 network-served (AGPLv3 section 13). See docs/PLAN.md section 11.
 
+See `NOTICE` in this directory for the exact pinned upstream commit SHA these
+files were verified byte-identical against, and the commands to re-verify it.
+
 ## Import shim
 
 The vendored code uses flat imports (`from model import Puzzle`, `import util`)
