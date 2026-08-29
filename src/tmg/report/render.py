@@ -134,11 +134,16 @@ def render_text(report: GameReport, show_san: bool = False) -> str:
         # still carry a judgement. Never advise the learner to play the move
         # they just played.
         if move.best_uci and move.judgement is not None and move.best_uci != move.uci:
-            best_is_castling = bool(move.best_san) and move.best_san.startswith("O-O")
             if show_san and move.best_san:
                 better = move.best_san
             else:
-                better = describe_uci(move.best_uci, is_castling=best_is_castling)
+                # is_castling must come from SAN, never from the squares -- see
+                # describe_uci. No best_san (an older report) means "not known
+                # to be a castle", which renders as plain squares.
+                better = describe_uci(
+                    move.best_uci,
+                    is_castling=bool(move.best_san and move.best_san.startswith("O-O")),
+                )
             lines.append(f"      better was {better}")
         concepts = _teaching_concepts(move.concepts)
         if concepts:

@@ -1,4 +1,3 @@
-import io
 import sys
 from pathlib import Path
 
@@ -159,11 +158,12 @@ def _run_under_c_locale(pgn_file: Path, script: str = _READ_PATH_ONLY):
 
     import tmg
 
-    # The child gets a bare environment, so it does not inherit pytest's
-    # `pythonpath = ["src"]` (which is applied to this process's sys.path, not
-    # to PYTHONPATH). Without this the child dies with ModuleNotFoundError and
-    # the test fails for a reason that has nothing to do with locales, in every
-    # checkout where the package is not pip-installed.
+    # The child inherits this process's environment (see `**os.environ` below)
+    # -- but NOT pytest's `pythonpath = ["src"]`, which is applied to this
+    # process's sys.path, not to PYTHONPATH. Without prepending it the child
+    # dies with ModuleNotFoundError and the test fails for a reason that has
+    # nothing to do with locales, in every checkout where the package is not
+    # pip-installed.
     src_dir = str(Path(tmg.__file__).resolve().parent.parent)
     env = {
         **os.environ,
@@ -303,3 +303,28 @@ def test_the_unreadable_passage_warning_does_not_claim_a_truncation_it_cannot_se
     assert seen == [["e2e4", "e7e5", "g1f3", "b8c6"]]
     assert "only the moves before" not in err
     assert "may be missing" in err
+
+
+def test_cli_rejects_a_pgn_containing_a_null_move(tmp_path, capsys, monkeypatch):
+    # "--" passes the turn in analysis PGNs. It parses to Move.null() and
+    # records ZERO parse errors, so the unreadable-passage warning cannot see
+    # it -- and it used to reach StockfishAdapter as `searchmoves 0000`, which
+    # returns no candidates and left main() raising RuntimeError with a
+    # traceback.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "nullmove.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n'
+        "\n1. e4 e5 2. -- Nc6 *\n"
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "null move" in err.lower()
+
+
+def _explodes(*args, **kwargs):
+    raise AssertionError("the engine must not be started for a rejected PGN")

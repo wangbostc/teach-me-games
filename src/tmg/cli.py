@@ -3,6 +3,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import chess
 import chess.pgn
 
 from tmg.engine.stockfish import DEFAULT_NODES, StockfishAdapter, stockfish_available
@@ -96,6 +97,20 @@ def main(argv: list[str] | None = None) -> int:
             "could not read; some moves may be missing from this report",
             file=sys.stderr,
         )
+
+    # A null move ("--", used in analysis PGNs to pass the turn) parses to
+    # Move.null() and records NO parse error, so the warning above does not see
+    # it. It would reach StockfishAdapter.analyse_move as `searchmoves 0000`,
+    # which returns no candidates and raises out of main() with a traceback.
+    # There is no move quality to judge for a move nobody played, so refuse the
+    # file rather than annotate around a hole in it.
+    if any(move == chess.Move.null() for move in game.mainline_moves()):
+        print(
+            f"error: {pgn_path} contains a null move (\"--\"); that is an analysis "
+            "document, not a played game, and has no move quality to judge",
+            file=sys.stderr,
+        )
+        return 2
 
     with StockfishAdapter(path=args.engine, nodes=args.nodes, multipv=args.multipv) as engine:
         report = analyse_game(game, engine)
