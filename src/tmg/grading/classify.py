@@ -8,6 +8,9 @@ Source: lichess-org/lila modules/tree/src/main/Advice.scala
 
 Mate transitions take a separate raw-centipawn path, and the two branches key off
 DIFFERENT scores -- MateCreated on the prior score, MateLost on the resulting one.
+
+A sign flip from positive to negative mate (having a mate, then getting mated) is an
+unconditional blunder with no threshold: the mover had a winning continuation available.
 """
 from enum import Enum
 
@@ -69,6 +72,8 @@ def judge_move(
     All values are from the MOVER's point of view: a negative mate means the mover
     is being mated.
     """
+    if prev_mate is not None and prev_mate > 0 and cur_mate is not None and cur_mate < 0:
+        return Judgement.BLUNDER  # Sign flip: had mate, now getting mated
     if prev_mate is not None and cur_mate is not None:
         return None  # MateDelayed -- no judgement
     if prev_cp is not None and cur_mate is not None and cur_mate < 0:
