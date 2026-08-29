@@ -1,4 +1,45 @@
+import sys
+from pathlib import Path
+
 from tmg.tagging.blunder import tag_self_blunder
+from tmg.tagging.vendor import cook
+from tmg.tagging.vendor.model import Puzzle
+
+
+def test_vendor_import_shim_leaves_no_residue():
+    """Verify sys.modules aliasing doesn't pollute global state."""
+    # After importing tmg.tagging.blunder (which imports cook),
+    # there should be no top-level "model" or "util" in sys.modules
+    # (unless they legitimately existed before, which they shouldn't in tests)
+    assert "model" not in sys.modules, (
+        'sys.modules should not contain a top-level "model" key after import '
+        "(it was removed by the shim's finally block)"
+    )
+    assert "util" not in sys.modules, (
+        'sys.modules should not contain a top-level "util" key after import '
+        "(it was removed by the shim's finally block)"
+    )
+
+
+def test_vendor_import_shim_produces_one_identity():
+    """Verify cook.py sees the same Puzzle class as our package code."""
+    # cook.py imports Puzzle via flat "from model import Puzzle"
+    # __init__.py imports Puzzle via "from .model import Puzzle"
+    # They must be the same class object (identity, not just equality)
+    # so there's no silent duck-typing failure if upstream adds isinstance checks
+    assert cook.Puzzle is Puzzle, (
+        "cook.Puzzle and tmg.tagging.vendor.model.Puzzle must be the same class object; "
+        "the sys.modules shim ensures flat imports resolve to package-qualified modules"
+    )
+
+
+def test_vendor_directory_is_not_on_sys_path():
+    """Verify the shim doesn't permanently add to sys.path."""
+    vendor_dir = Path(__file__).parent.parent.parent / "tmg" / "tagging" / "vendor"
+    assert str(vendor_dir) not in sys.path, (
+        "sys.path should not contain the vendor directory; "
+        "it is added temporarily during import and removed by the shim's finally block"
+    )
 
 
 def test_rook_moved_to_an_undefended_square_is_tagged_hanging():
