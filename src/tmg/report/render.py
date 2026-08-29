@@ -37,18 +37,31 @@ def _teaching_concepts(concepts: tuple[str, ...]) -> tuple[str, ...]:
 
 _PROMOTION_WORDS = {"q": "queen", "r": "rook", "b": "bishop", "n": "knight"}
 
-# Keyed by (from, to) squares, which fully determine the rook's own move for a
-# legal castle in standard (non-Chess960) chess -- the only variant this
-# project supports. NOT used to DETECT castling (a queen or rook sliding
-# between the same two squares emits the identical UCI) -- describe_uci's
-# is_castling flag must come from SAN ("O-O"/"O-O-O"), which python-chess
-# only emits for a genuine castling move.
-_CASTLE_TEXT = {
-    "e1g1": "castling kingside (king to g1, rook to f1)",
-    "e1c1": "castling queenside (king to c1, rook to d1)",
-    "e8g8": "castling kingside (king to g8, rook to f8)",
-    "e8c8": "castling queenside (king to c8, rook to d8)",
-}
+
+def _castle_text(uci: str) -> str:
+    """Both destinations for a castle, derived from the UCI's own squares.
+
+    Computed, not looked up in a table of the four standard-chess UCIs: the
+    CLI accepts Chess960, and python-chess emits Chess960 castling in the
+    king-takes-rook form ("g1h1", "b1a1", ...). A table keyed on e1g1/e1c1/
+    e8g8/e8c8 misses every one of those and fell through to "g1 to h1" --
+    which names the ROOK's square as the king's destination.
+
+    The rules fix the destinations in both: the king ends on the g-file
+    (kingside) or the c-file (queenside) of its own back rank, with the rook
+    beside it on f or d. Which side it is follows from the direction, in both
+    notations -- the king always starts between its two rooks, so the square
+    it moves towards is on the side being castled.
+
+    NOT used to DETECT castling (a queen or rook sliding between the same two
+    squares emits the identical UCI) -- describe_uci's is_castling flag must
+    come from SAN ("O-O"/"O-O-O"), which python-chess only emits for a genuine
+    castling move.
+    """
+    rank = uci[1]
+    if uci[2] > uci[0]:
+        return f"castling kingside (king to g{rank}, rook to f{rank})"
+    return f"castling queenside (king to c{rank}, rook to d{rank})"
 
 
 def describe_uci(uci: str, is_castling: bool = False) -> str:
@@ -64,7 +77,7 @@ def describe_uci(uci: str, is_castling: bool = False) -> str:
     from e1 to g1, which is not a castle.
     """
     if is_castling:
-        return _CASTLE_TEXT.get(uci, f"{uci[:2]} to {uci[2:4]}")
+        return _castle_text(uci)
     frm, to = uci[:2], uci[2:4]
     if len(uci) == 5:
         piece = _PROMOTION_WORDS.get(uci[4], uci[4])

@@ -371,3 +371,29 @@ def test_cli_still_accepts_a_chess960_pgn(tmp_path, capsys, monkeypatch):
 
 def _explodes(*args, **kwargs):
     raise AssertionError("the engine must not be started for a rejected PGN")
+
+
+def test_cli_rejects_a_variant_python_chess_does_not_even_know(
+    tmp_path, capsys, monkeypatch
+):
+    # REGRESSION: an unrecognised [Variant] makes chess.pgn's find_variant
+    # raise out of game.board() -- but read_game itself does NOT fail on it,
+    # it records the error and parses the moves against a standard board. So
+    # the game reached the variant guard looking analysable and the guard's
+    # own `game.board()` call raised, exiting 1 with a traceback: the exact
+    # failure the guard exists to replace.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "duck.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[Variant "Duck Chess"]\n[White "me"]\n[Black "them"]\n'
+        '[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *\n'
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "duck chess" in err.lower()
+    assert "standard chess" in err.lower()

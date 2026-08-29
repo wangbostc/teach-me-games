@@ -123,7 +123,24 @@ def main(argv: list[str] | None = None) -> int:
     # standard-chess rules and report the result as fact. Chess960 is NOT
     # rejected -- it is standard chess on a shuffled back rank, and
     # python-chess drives UCI_Chess960 for it.
-    board = game.board()
+    #
+    # A Variant header python-chess does not know at all (a chess.com "Duck
+    # Chess" or "Bughouse" export) does not even survive game.board(): its
+    # find_variant raises ValueError. read_game does NOT fail on it -- it
+    # records the error and parses the moves against a standard board -- so
+    # the game reaches here looking analysable, and the raise came out as a
+    # traceback on exit 1, which is precisely what this guard exists to
+    # replace.
+    try:
+        board = game.board()
+    except ValueError:
+        print(
+            f"error: {pgn_path} is a "
+            f"{game.headers.get('Variant', 'non-standard')} game; "
+            "tmg only analyses standard chess",
+            file=sys.stderr,
+        )
+        return 2
     if board.uci_variant != "chess":
         print(
             f"error: {pgn_path} is a "
