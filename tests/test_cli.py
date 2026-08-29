@@ -2,6 +2,7 @@ import io
 import sys
 from pathlib import Path
 
+import tmg.cli
 from tmg.cli import main
 
 PGN = """[Event "test"]
@@ -176,6 +177,12 @@ def _run_under_c_locale(pgn_file: Path, script: str = _READ_PATH_ONLY):
         "PYTHONUTF8": "0",
         "PYTHONCOERCECLOCALE": "0",
     }
+    # PYTHONIOENCODING overrides the locale for the child's std streams only.
+    # Inheriting it (Docker images and CI configs set it precisely to dodge
+    # this class of bug) gives the child a UTF-8 stdout under LC_ALL=C, and the
+    # stdout half of these tests then passes with the fix reverted -- a
+    # regression test that cannot fail. The `open()` half is unaffected by it.
+    env.pop("PYTHONIOENCODING", None)
     return subprocess.run(
         [sys.executable, "-c", script, str(pgn_file)],
         capture_output=True, text=True, env=env,
@@ -262,3 +269,37 @@ def test_cli_warns_when_the_pgn_has_a_move_it_cannot_read(tmp_path, capsys, monk
 
     assert exit_code == 0
     assert "could not read" in err.lower()
+
+
+def test_the_unreadable_passage_warning_does_not_claim_a_truncation_it_cannot_see(
+    tmp_path, capsys, monkeypatch
+):
+    # `game.errors` is NOT "the game was truncated". A game-termination marker
+    # inside a variation makes chess.pgn.read_game record two errors while the
+    # mainline still parses in full -- and it is the whole mainline that gets
+    # analysed. Telling the reader we analysed "only the moves before the first
+    # of them" would be flatly false for exactly the annotated PGNs most likely
+    # to hit this.
+    seen: list[list[str]] = []
+    _fake_success(monkeypatch)
+    fake_report = tmg.cli.analyse_game(None, None)  # the stub _fake_success installed
+
+    def spy(game, engine):
+        seen.append([m.uci() for m in game.mainline_moves()])
+        return fake_report
+
+    monkeypatch.setattr("tmg.cli.analyse_game", spy)
+
+    pgn_file = tmp_path / "result_in_variation.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n'
+        "\n1. e4 e5 (1... c5 1-0) 2. Nf3 Nc6 *\n"
+    )
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 0
+    # Nothing was actually lost: all four mainline plies reached the pipeline.
+    assert seen == [["e2e4", "e7e5", "g1f3", "b8c6"]]
+    assert "only the moves before" not in err
+    assert "may be missing" in err

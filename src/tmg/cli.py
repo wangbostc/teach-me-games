@@ -77,14 +77,23 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    # read_game does not raise on an unreadable move -- it records the error and
-    # stops adding moves, so the game silently ends there. Analysing a truncated
-    # game and printing a whole-game "summary:" line as if nothing were missing
-    # is the same trap the multi-game warning above exists to close.
+    # read_game does not raise on an unreadable token -- it records the error and
+    # skips ahead, and an error on a MAINLINE move stops the game there, so the
+    # report can silently cover only part of the game while its "summary:" line
+    # reads as a verdict on all of it. That is the same trap the multi-game
+    # warning above exists to close.
+    #
+    # `game.errors` does NOT mean "the game was truncated", though, and one
+    # entry does not mean one lost move: a game-termination marker inside a
+    # variation ("1. e4 e5 (1... c5 1-0) 2. Nf3 Nc6 *") records two errors
+    # while the mainline still parses in full, and an unrecognised token is
+    # dropped silently so the error lands on the NEXT move instead. So the
+    # warning reports how much the parser choked on, and says moves MAY be
+    # missing -- it must not assert a truncation it cannot actually see.
     if game.errors:
         print(
-            f"warning: {pgn_path} has {len(game.errors)} move(s) this parser "
-            "could not read; analysing only the moves before the first of them",
+            f"warning: {pgn_path} has {len(game.errors)} passage(s) this parser "
+            "could not read; some moves may be missing from this report",
             file=sys.stderr,
         )
 

@@ -35,15 +35,24 @@ def test_vendor_import_shim_produces_one_identity():
 
 
 def test_vendor_directory_is_not_on_sys_path():
-    """Verify the shim doesn't permanently add to sys.path."""
+    """The shim must resolve cook.py's flat imports without sys.path pollution.
+
+    Standing guard, not a check on the current shim: db45e73 replaced sys.path
+    manipulation with sys.modules aliasing, so today nothing touches sys.path
+    and this cannot fail. It fails the moment someone reaches for sys.path
+    again -- which is the point. A vendor directory left on sys.path would let
+    its flat `model` and `util` shadow any same-named top-level module in a
+    consuming application.
+    """
     # Ask the package where it actually lives. Hand-assembling the path from
     # this file's location silently pointed at <repo>/tmg/tagging/vendor -- the
-    # "src" segment was missing -- so the assertion below could never fail, no
-    # matter what the shim did to sys.path.
+    # "src" segment was missing -- so this pointed at a directory that does not
+    # exist and could never have been present in sys.path anyway.
     vendor_dir = Path(vendor.__file__).resolve().parent
+    assert vendor_dir.is_dir(), "the path under test must be the real vendor directory"
     assert str(vendor_dir) not in sys.path, (
-        "sys.path should not contain the vendor directory; "
-        "it is added temporarily during import and removed by the shim's finally block"
+        "sys.path must not contain the vendor directory: its flat `model` and "
+        "`util` modules would shadow same-named top-level modules elsewhere"
     )
 
 
