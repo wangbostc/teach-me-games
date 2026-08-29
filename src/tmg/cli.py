@@ -71,9 +71,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not stockfish_available(args.engine):
+        # Name the path that was actually tried. The old message was a fixed
+        # string ending in "or pass --engine /path/to/stockfish", which is
+        # useless advice for the user who already passed --engine and got the
+        # path wrong: it neither says which path failed nor acknowledges the
+        # flag they used.
         print(
-            "error: no stockfish binary found. Install it with `brew install stockfish`, "
-            "or pass --engine /path/to/stockfish.",
+            f"error: no engine binary found at {args.engine!r}. Install Stockfish "
+            "(`brew install stockfish`), or pass --engine /path/to/stockfish.",
             file=sys.stderr,
         )
         return 2
@@ -255,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with StockfishAdapter(path=args.engine, nodes=args.nodes, multipv=args.multipv) as engine:
             report = analyse_game(game, engine)
-    except chess.engine.EngineError as exc:
+    except (chess.engine.EngineError, OSError) as exc:
         # The guards above cover the inputs we can recognise ourselves; the
         # engine can still refuse a run for reasons only it knows -- an option
         # value outside the range this build accepts (`--multipv 600` exceeds
@@ -263,7 +268,24 @@ def main(argv: list[str] | None = None) -> int:
         # clamping), a build missing an option we set, or the subprocess dying
         # mid-game (EngineTerminatedError subclasses EngineError). Report it
         # and exit 2 rather than ending the run on a traceback.
-        print(f"error: the engine could not run this analysis: {exc}", file=sys.stderr)
+        #
+        # OSError as well as EngineError: not every subprocess failure arrives
+        # as one. stockfish_available() only proves the path resolves to an
+        # executable file, so `--engine /bin/cat` (or a wrapper script, or a
+        # path that points at the wrong program) gets as far as spawning, then
+        # fails SimpleEngine.popen_uci's 10-second UCI handshake with
+        # TimeoutError -- an OSError subclass, NOT an EngineError -- which
+        # walked straight through this handler and ended the run on a
+        # traceback after a ten-second hang. An exec failure (bad shebang,
+        # wrong architecture) raises a plain OSError and did the same.
+        # TimeoutError's str() is empty, so name the class when there is no
+        # message to show.
+        detail = str(exc) or type(exc).__name__
+        print(
+            f"error: the engine could not run this analysis "
+            f"({args.engine}): {detail}",
+            file=sys.stderr,
+        )
         return 2
 
     # The report carries player names straight from the PGN, and the read path

@@ -599,3 +599,46 @@ def test_analyse_move_with_no_engine_line_raises_an_engine_error(monkeypatch):
 
     with pytest.raises(chess.engine.EngineError, match="no line for"):
         adapter.analyse_move(chess.Board(), chess.Move.from_uci("e2e4"))
+
+
+def test_cli_reports_a_non_uci_engine_binary_without_a_traceback(
+    tmp_path, capsys, monkeypatch
+):
+    # REGRESSION: stockfish_available() only proves the --engine path resolves
+    # to an executable file. Point it at a program that is not a UCI engine (a
+    # wrapper script, a mistyped path that happens to hit another binary,
+    # /bin/cat) and SimpleEngine.popen_uci spawns it, waits out its 10-second
+    # UCI handshake, and raises TimeoutError -- an OSError subclass, NOT a
+    # chess.engine.EngineError -- so it walked straight through main()'s
+    # handler and ended the run on a traceback at exit 1. An exec failure (bad
+    # shebang, wrong architecture) is a plain OSError and did the same.
+    def _times_out(**kwargs):
+        raise TimeoutError()  # str() is empty, like the real one
+
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _times_out)
+    pgn_file = tmp_path / "game.pgn"
+    pgn_file.write_text(PGN)
+
+    exit_code = main([str(pgn_file), "--engine", "/bin/cat"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    # An empty str(exc) must not render as "could not run this analysis: ".
+    assert "TimeoutError" in err
+    assert "/bin/cat" in err
+
+
+def test_the_missing_engine_message_names_the_path_that_was_tried(tmp_path, capsys):
+    # A fixed "or pass --engine /path/to/stockfish" is useless advice for the
+    # user who already passed --engine and got the path wrong: it neither says
+    # which path failed nor acknowledges the flag they used.
+    pgn_file = tmp_path / "game.pgn"
+    pgn_file.write_text(PGN)
+
+    exit_code = main([str(pgn_file), "--engine", "/opt/nope/stockfish"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "/opt/nope/stockfish" in err
