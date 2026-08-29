@@ -129,11 +129,13 @@ def test_describe_uci_castling_mentions_the_rook():
 
 
 def test_describe_uci_castling_handles_the_chess960_king_takes_rook_form():
-    # REGRESSION: the CLI accepts Chess960, and python-chess emits its
-    # castling as king-takes-rook ("g1h1"). A lookup table keyed on the four
-    # standard UCIs missed those and fell through to "g1 to h1" -- naming the
-    # ROOK's square as the king's destination. The destinations are the same
-    # in Chess960: king to g/c, rook to f/d.
+    # REGRESSION: python-chess emits Chess960 castling as king-takes-rook
+    # ("g1h1"). A lookup table keyed on the four standard UCIs missed those
+    # and fell through to "g1 to h1" -- naming the ROOK's square as the king's
+    # destination. The CLI refuses 960 today (the vendored tagger cannot
+    # handle it), so this is a standing guard on describe_uci itself, which
+    # has no such restriction: the destinations are the same in Chess960 --
+    # king to g/c, rook to f/d.
     assert describe_uci("g1h1", is_castling=True) == (
         "castling kingside (king to g1, rook to f1)"
     )

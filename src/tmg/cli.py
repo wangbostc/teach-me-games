@@ -27,7 +27,17 @@ def _positive_int(text: str) -> int:
     baseline search with no candidates at all, so every move goes unjudged and
     the report's "summary:" line reports a clean game. Refuse both up front.
     """
-    value = int(text)
+    try:
+        value = int(text)
+    except ValueError:
+        # Raised as an ArgumentTypeError, not left to argparse's own int()
+        # handling: argparse builds that message from the type callable's
+        # __name__, so a bare `int(text)` here surfaced as "invalid
+        # _positive_int value: 'abc'" -- leaking a private helper's name at
+        # the user.
+        raise argparse.ArgumentTypeError(
+            f"must be a whole number, got {text!r}"
+        ) from None
     if value < 1:
         raise argparse.ArgumentTypeError(f"must be 1 or greater, got {value}")
     return value
@@ -217,9 +227,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         board = game.board()
     except ValueError:
+        # `or`, not a get() default: the default only applies when the key is
+        # ABSENT, so an empty (or whitespace-only) [Variant ""] header -- which
+        # find_variant rejects just the same -- rendered as "is a  game".
         print(
             f"error: {pgn_path} is a "
-            f"{game.headers.get('Variant', 'non-standard')} game; "
+            f"{game.headers.get('Variant', '').strip() or 'non-standard'} game; "
             "tmg only analyses standard chess",
             file=sys.stderr,
         )
@@ -240,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     if board.uci_variant != "chess":
         print(
             f"error: {pgn_path} is a "
-            f"{game.headers.get('Variant') or board.uci_variant} game; "
+            f"{game.headers.get('Variant', '').strip() or board.uci_variant} game; "
             "tmg only analyses standard chess",
             file=sys.stderr,
         )
