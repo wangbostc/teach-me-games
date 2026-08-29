@@ -25,3 +25,54 @@ def test_cli_rejects_a_missing_file(tmp_path, capsys):
     exit_code = main([str(tmp_path / "nope.pgn")])
     assert exit_code == 2
     assert "not found" in capsys.readouterr().err.lower()
+
+
+def test_cli_rejects_a_garbage_pgn_that_parses_to_zero_moves(tmp_path, capsys, monkeypatch):
+    # chess.pgn.read_game doesn't fail on non-PGN text -- it returns a Game with
+    # placeholder "?" headers and no moves. That must still be exit 2, not a
+    # silently-empty success report.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    pgn_file = tmp_path / "garbage.pgn"
+    pgn_file.write_text("this is not a pgn file at all\njust some random text\n")
+    exit_code = main([str(pgn_file)])
+    assert exit_code == 2
+    assert "no game found" in capsys.readouterr().err.lower()
+
+
+def test_cli_rejects_a_non_utf8_file_without_a_traceback(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    pgn_file = tmp_path / "binary.pgn"
+    pgn_file.write_bytes(b"\xff\xfe\x00\x01binary garbage \x80\x81\x82")
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "could not parse" in err.lower()
+
+
+def test_cli_success_path_prints_report_and_exits_zero(tmp_path, capsys, monkeypatch):
+    from tmg.report.model import GameReport
+
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+
+    class _FakeEngine:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", lambda **kwargs: _FakeEngine())
+    fake_report = GameReport(
+        white="me", black="them", result="*", moves=(), engine_id=None, nodes=0,
+    )
+    monkeypatch.setattr("tmg.cli.analyse_game", lambda game, engine: fake_report)
+
+    pgn_file = tmp_path / "game.pgn"
+    pgn_file.write_text(PGN)
+    exit_code = main([str(pgn_file)])
+    out = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "me vs them" in out.out
+    assert out.err == ""

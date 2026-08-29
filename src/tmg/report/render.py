@@ -12,6 +12,27 @@ _LABEL = {
     Judgement.BLUNDER: "blunder",
 }
 
+# Concept tags that are puzzle-database bookkeeping rather than a chess motif a
+# beginner can learn from: the outcome category ("goal"), the solution length,
+# and the game phase (already shown separately, or -- for the *Endgame piece
+# variants -- carrying no teaching value on their own). Named motifs and mate
+# patterns (hangingPiece, fork, backRankMate, mateIn1, ...) are deliberately
+# NOT filtered here -- turning them into learner prose is the LLM explainer's
+# job in a later milestone, not this renderer's.
+_NOISE_CONCEPTS = frozenset(
+    {
+        "equality", "advantage", "crushing", "mate",
+        "oneMove", "short", "long", "veryLong",
+        "opening", "middlegame", "endgame",
+        "bishopEndgame", "knightEndgame", "pawnEndgame",
+        "queenEndgame", "rookEndgame", "queenRookEndgame",
+    }
+)
+
+
+def _teaching_concepts(concepts: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(concept for concept in concepts if concept not in _NOISE_CONCEPTS)
+
 
 def _describe_move(move: MoveReport, show_san: bool) -> str:
     if show_san:
@@ -20,11 +41,23 @@ def _describe_move(move: MoveReport, show_san: bool) -> str:
 
 
 def _eval_text(cp: int | None, mate: int | None) -> str:
+    """Format an evaluation. Both cp and mate are already mover-POV (see
+    MoveReport), so "good for you" / "bad for you" always describes whoever
+    just played the move being described -- the same convention the principle
+    violation messages already use ("Your rook on e5 can be captured.").
+    """
     if mate is not None:
-        return f"mate in {abs(mate)}"
+        pov = "good for you" if mate > 0 else "bad for you"
+        return f"mate in {abs(mate)}, {pov}"
     if cp is None:
         return "?"
-    return f"{cp / 100:+.2f}"
+    if cp > 0:
+        pov = "good for you"
+    elif cp < 0:
+        pov = "bad for you"
+    else:
+        pov = "even"
+    return f"{cp / 100:+.2f}, {pov}"
 
 
 def _plural(count: int, word: str) -> str:
@@ -61,8 +94,9 @@ def render_text(report: GameReport, show_san: bool = False) -> str:
                 else f"{move.best_uci[:2]} to {move.best_uci[2:4]}"
             )
             lines.append(f"      better was {better}")
-        if move.concepts:
-            lines.append(f"      concept: {', '.join(move.concepts)}")
+        concepts = _teaching_concepts(move.concepts)
+        if concepts:
+            lines.append(f"      concept: {', '.join(concepts)}")
         for violation in move.violations:
             lines.append(f"      {violation.message}")
         lines.append("")

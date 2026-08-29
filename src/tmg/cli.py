@@ -38,9 +38,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    with pgn_path.open() as handle:
-        game = chess.pgn.read_game(handle)
-    if game is None:
+    try:
+        with pgn_path.open() as handle:
+            game = chess.pgn.read_game(handle)
+    except UnicodeDecodeError:
+        print(f"error: could not parse PGN file: {pgn_path}", file=sys.stderr)
+        return 2
+
+    # A garbage (non-PGN) file doesn't fail to parse -- it parses to a Game with
+    # placeholder "?" headers and zero moves. Treat that the same as "no game
+    # found": it is not a usable annotation target either way.
+    if game is None or not game.mainline_moves():
         print(f"error: no game found in {pgn_path}", file=sys.stderr)
         return 2
 
