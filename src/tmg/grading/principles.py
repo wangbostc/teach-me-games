@@ -46,7 +46,9 @@ def check_principles(board_before: chess.Board, move: chess.Move) -> list[Violat
 
     # 1. Did the move leave the piece it moved hanging?
     if moved_piece is not None and is_en_prise(after, move.to_square):
-        word = _PIECE_WORDS[moved_piece.piece_type]
+        # Use the promoted piece type if this is a promotion, otherwise the moved piece type.
+        piece_type = move.promotion if move.promotion else moved_piece.piece_type
+        word = _PIECE_WORDS[piece_type]
         violations.append(
             Violation(
                 "piece_left_en_prise",
@@ -74,7 +76,7 @@ def check_principles(board_before: chess.Board, move: chess.Move) -> list[Violat
     if (
         not is_castling
         and move_number > CASTLE_BY_MOVE
-        and after.has_castling_rights(mover)
+        and board_before.has_castling_rights(mover)
     ):
         violations.append(
             Violation(
