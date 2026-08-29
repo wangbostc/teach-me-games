@@ -61,8 +61,11 @@ def test_king_move_that_forfeits_castling_is_flagged_as_uncastled():
 def test_already_castled_player_is_not_flagged_for_uncastled():
     # Move 11, White has already castled kingside (K flag absent), plays a quiet move.
     # Should NOT be flagged, because castling rights are gone (already used).
+    # The quiet move is Rf1-e1: f1f2 (the move this used to pass) is the rook
+    # moving onto its OWN f2 pawn -- illegal, so the test proved nothing about
+    # a move a game could actually contain.
     assert "uncastled_late" not in _rules(
-        "rnbqk2r/pppp1ppp/5n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQ1RK1 w kq - 0 11", "f1f2"
+        "rnbqk2r/pppp1ppp/5n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQ1RK1 w kq - 0 11", "f1e1"
     )
 
 
@@ -94,3 +97,28 @@ def test_promotion_message_uses_promoted_piece_not_pawn():
     message = next(v.message for v in violations if v.rule == "piece_left_en_prise")
     assert "queen on e8" in message
     assert "pawn on e8" not in message
+
+
+def test_uncastled_late_is_not_reported_for_a_move_played_in_check():
+    # Castling out of check is illegal, so "castling is usually the most
+    # important move" is advice the learner cannot act on for THIS move. And
+    # because the rule dedupes per game, the bogus firing used to be the only
+    # firing for that colour -- see the next test.
+    # Morphy's Opera Game after 11.Bxb5+: Black is in check and 11...Nbd7 is a
+    # forced block.
+    board = chess.Board("rn2kb1r/p3qppp/5n2/1B2p1B1/4P3/1Q6/PPP2PPP/R3K2R b KQkq - 0 11")
+    assert board.is_check()
+    assert not [m for m in board.legal_moves if board.is_castling(m)]
+    rules = {v.rule for v in check_principles(board, chess.Move.from_uci("b8d7"))}
+    assert "uncastled_late" not in rules
+
+
+def test_uncastled_late_still_fires_on_the_next_move_where_castling_is_legal():
+    # The other half: suppressing the in-check ply must not suppress the rule.
+    # One move later Black is out of check and O-O-O is legal, so the advice is
+    # actionable and must be delivered there instead.
+    board = chess.Board("r3kb1r/p2nqppp/5n2/1B2p1B1/4P3/1Q6/PPP2PPP/2KR3R b kq - 2 12")
+    assert not board.is_check()
+    assert [m for m in board.legal_moves if board.is_castling(m)]
+    rules = {v.rule for v in check_principles(board, chess.Move.from_uci("a8d8"))}
+    assert "uncastled_late" in rules

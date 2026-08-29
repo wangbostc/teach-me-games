@@ -1,5 +1,6 @@
 """tmg -- turn a PGN into an annotated, concept-tagged report."""
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -62,8 +63,29 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _quiet_python_chess_parse_logging() -> None:
+    """Keep chess.pgn's own parse errors off stderr.
+
+    chess.pgn logs every unreadable token at ERROR ("illegal san: 'f4' in
+    <fen> while parsing <Game at 0x7f... ('me' vs. 'them', ...)>"). With no
+    handler configured anywhere, logging's lastResort handler prints that --
+    object address and all -- straight to stderr, ahead of the curated
+    "N passage(s) this parser could not read" warning below that says the same
+    thing in the CLI's own voice. Two messages for one problem, one of them
+    internal detail no reader can act on. A NullHandler (not just
+    propagate=False, which still falls through to lastResort) suppresses the
+    raw one; nothing is lost, because `game.errors` still carries every entry
+    and the warning below counts them.
+    """
+    pgn_logger = logging.getLogger("chess.pgn")
+    if not pgn_logger.handlers:
+        pgn_logger.addHandler(logging.NullHandler())
+    pgn_logger.propagate = False
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    _quiet_python_chess_parse_logging()
 
     pgn_path = Path(args.pgn)
     if not pgn_path.is_file():

@@ -273,6 +273,84 @@ def test_cli_warns_when_the_pgn_has_a_move_it_cannot_read(tmp_path, capsys, monk
     assert "could not read" in err.lower()
 
 
+def _run_in_child(pgn_file: Path, script: str):
+    """Run `script` against `pgn_file` in a fresh interpreter, default locale.
+
+    Same PYTHONPATH plumbing as `_run_under_c_locale` and for the same reason
+    (pytest's `pythonpath = ["src"]` applies to this process's sys.path, not to
+    the child's PYTHONPATH), but without forcing a locale -- these tests are
+    about what a fresh process prints, not about how it decodes.
+    """
+    import os
+    import subprocess
+
+    import tmg
+
+    src_dir = str(Path(tmg.__file__).resolve().parent.parent)
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            [src_dir, *filter(None, [os.environ.get("PYTHONPATH", "")])]
+        ),
+    }
+    return subprocess.run(
+        [sys.executable, "-c", script, str(pgn_file)],
+        capture_output=True, text=True, env=env,
+    )
+
+
+# chess.pgn logs every unreadable token at ERROR. With no handler configured
+# anywhere, logging's lastResort prints it straight to stderr -- but ONLY in a
+# process where nothing else has claimed the root logger. pytest's logging
+# plugin does claim it, so this has to run in a child process or it is a test
+# that cannot fail.
+_PARSE_ERROR_STDERR_PROBE = """
+import sys
+import tmg.cli
+
+
+class _NoEngine:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+tmg.cli.stockfish_available = lambda path="stockfish": True
+tmg.cli.StockfishAdapter = _NoEngine
+tmg.cli.analyse_game = lambda game, engine: game
+tmg.cli.render_text = lambda report, show_san=False: "ok"
+sys.exit(tmg.cli.main([sys.argv[1]]))
+"""
+
+
+def test_python_chess_does_not_print_its_own_raw_parse_errors(tmp_path):
+    # REGRESSION: one unreadable move produced two stderr messages -- the CLI's
+    # curated "N passage(s) this parser could not read", and ahead of it
+    # chess.pgn's own "illegal san: 'Qxq9' in <fen> while parsing <Game at
+    # 0x7f... ('me' vs. 'them', ...)>", which leaks an object address no reader
+    # can act on and says nothing the warning does not.
+    pgn_file = tmp_path / "truncated.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n'
+        "\n1. e4 e5 2. Nf3 Nf6 3. Qxq9 Nc6 4. Bb5 a6 *\n"
+    )
+
+    result = _run_in_child(pgn_file, _PARSE_ERROR_STDERR_PROBE)
+
+    assert result.returncode == 0, result.stderr
+    # The CLI's own curated warning is still there...
+    assert "could not read" in result.stderr.lower()
+    # ...and python-chess's raw internal one is not.
+    assert "illegal san" not in result.stderr.lower()
+    assert "while parsing" not in result.stderr.lower()
+    assert "<Game at" not in result.stderr
+
+
 def test_the_unreadable_passage_warning_does_not_claim_a_truncation_it_cannot_see(
     tmp_path, capsys, monkeypatch
 ):
