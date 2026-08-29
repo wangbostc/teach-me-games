@@ -41,6 +41,21 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with pgn_path.open() as handle:
             game = chess.pgn.read_game(handle)
+            # Peek for a second game while the handle is still open (a Lichess
+            # "export my games" download is the most likely real multi-game
+            # input). A decode error out here is a fault in trailing content
+            # past the game we can already use, not in the game itself -- so
+            # it downgrades to "no more games" rather than failing the run.
+            try:
+                more_games = chess.pgn.read_game(handle)
+            except UnicodeDecodeError:
+                more_games = None
+            # A trailing non-PGN fragment also parses to a Game with
+            # placeholder "?" headers and zero moves rather than None -- same
+            # as the single-game case below -- so require actual moves before
+            # calling it a second game, or this would warn on every file with
+            # trailing whitespace or a stray comment.
+            has_more_games = more_games is not None and bool(more_games.mainline_moves())
     except UnicodeDecodeError:
         print(f"error: could not parse PGN file: {pgn_path}", file=sys.stderr)
         return 2
@@ -51,6 +66,13 @@ def main(argv: list[str] | None = None) -> int:
     if game is None or not game.mainline_moves():
         print(f"error: no game found in {pgn_path}", file=sys.stderr)
         return 2
+
+    if has_more_games:
+        print(
+            f"warning: {pgn_path} contains more than one game; "
+            "analysing only the first",
+            file=sys.stderr,
+        )
 
     with StockfishAdapter(path=args.engine, nodes=args.nodes, multipv=args.multipv) as engine:
         report = analyse_game(game, engine)

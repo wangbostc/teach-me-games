@@ -50,7 +50,7 @@ def test_cli_rejects_a_non_utf8_file_without_a_traceback(tmp_path, capsys, monke
     assert "could not parse" in err.lower()
 
 
-def test_cli_success_path_prints_report_and_exits_zero(tmp_path, capsys, monkeypatch):
+def _fake_success(monkeypatch):
     from tmg.report.model import GameReport
 
     monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
@@ -68,6 +68,10 @@ def test_cli_success_path_prints_report_and_exits_zero(tmp_path, capsys, monkeyp
     )
     monkeypatch.setattr("tmg.cli.analyse_game", lambda game, engine: fake_report)
 
+
+def test_cli_success_path_prints_report_and_exits_zero(tmp_path, capsys, monkeypatch):
+    _fake_success(monkeypatch)
+
     pgn_file = tmp_path / "game.pgn"
     pgn_file.write_text(PGN)
     exit_code = main([str(pgn_file)])
@@ -75,4 +79,35 @@ def test_cli_success_path_prints_report_and_exits_zero(tmp_path, capsys, monkeyp
 
     assert exit_code == 0
     assert "me vs them" in out.out
+    assert out.err == ""
+
+
+def test_cli_warns_on_stderr_when_the_pgn_has_more_than_one_game(tmp_path, capsys, monkeypatch):
+    # A Lichess "export my games" download is the most likely real multi-game
+    # input. Silently analysing only the first game (the old behaviour) with
+    # no message anywhere is a trap: the reader has no way to know the other
+    # games in the file were never looked at.
+    _fake_success(monkeypatch)
+
+    pgn_file = tmp_path / "many_games.pgn"
+    pgn_file.write_text(PGN + "\n" + PGN)
+    exit_code = main([str(pgn_file)])
+    out = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "more than one game" in out.err.lower()
+
+
+def test_cli_stays_silent_on_trailing_junk_with_no_second_game(tmp_path, capsys, monkeypatch):
+    # A trailing blank line or stray comment after the one real game must NOT
+    # be mistaken for a second game -- chess.pgn.read_game parses trailing
+    # non-PGN text to a placeholder Game with zero moves, not None.
+    _fake_success(monkeypatch)
+
+    pgn_file = tmp_path / "trailing_junk.pgn"
+    pgn_file.write_text(PGN + "\nnot a game, just trailing notes\n")
+    exit_code = main([str(pgn_file)])
+    out = capsys.readouterr()
+
+    assert exit_code == 0
     assert out.err == ""
