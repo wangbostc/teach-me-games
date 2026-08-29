@@ -14,11 +14,12 @@ _LABEL = {
 
 # Concept tags that are puzzle-database bookkeeping rather than a chess motif a
 # beginner can learn from: the outcome category ("goal"), the solution length,
-# and the game phase (already shown separately, or -- for the *Endgame piece
-# variants -- carrying no teaching value on their own). Named motifs and mate
-# patterns (hangingPiece, fork, backRankMate, mateIn1, ...) are deliberately
-# NOT filtered here -- turning them into learner prose is the LLM explainer's
-# job in a later milestone, not this renderer's.
+# and the game phase (opening/middlegame/endgame is recorded on
+# MoveReport.phase for later milestones -- this renderer does not print it --
+# and the *Endgame piece variants carry no teaching value on their own).
+# Named motifs and mate patterns (hangingPiece, fork, backRankMate, mateIn1,
+# ...) are deliberately NOT filtered here -- turning them into learner prose is
+# the LLM explainer's job in a later milestone, not this renderer's.
 _NOISE_CONCEPTS = frozenset(
     {
         "equality", "advantage", "crushing", "mate",

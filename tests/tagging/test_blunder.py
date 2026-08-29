@@ -56,6 +56,54 @@ def test_vendor_directory_is_not_on_sys_path():
     )
 
 
+_LOGGING_RESIDUE_PROBE = """
+import logging
+import sys
+
+before_handlers = logging.root.handlers[:]
+before_level = logging.root.level
+
+import tmg.tagging.vendor  # noqa: F401
+
+after_handlers = logging.root.handlers[:]
+print("same_handlers", after_handlers == before_handlers)
+print("same_level", logging.root.level == before_level)
+"""
+
+
+def test_vendor_import_leaves_the_root_logger_alone():
+    """cook.py calls logging.basicConfig() at module scope.
+
+    Unrestored, that attaches a StreamHandler to the ROOT logger and reformats
+    every record the consuming application logs -- and silently turns the
+    application's own later basicConfig() into a no-op. Must run in a child
+    process: by the time this test body runs, the import has long since
+    happened in the parent.
+    """
+    import os
+    import subprocess
+
+    import tmg
+
+    src_dir = str(Path(tmg.__file__).resolve().parent.parent)
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            [src_dir, *filter(None, [os.environ.get("PYTHONPATH", "")])]
+        ),
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", _LOGGING_RESIDUE_PROBE],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "same_handlers True" in result.stdout, (
+        "importing the vendored tagger left a handler on the root logger: "
+        + result.stdout
+    )
+    assert "same_level True" in result.stdout, result.stdout
+
+
 def test_rook_moved_to_an_undefended_square_is_tagged_hanging():
     tags = tag_self_blunder(
         fen_before="4r1k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1",

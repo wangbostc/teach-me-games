@@ -32,12 +32,15 @@ def _punisher_cp(cur_cp: int | None, cur_mate: int | None) -> int:
         # only ever classify a move as BLUNDER/MISTAKE/INACCURACY off a
         # NEGATIVE cur_mate (the mover walked into a forced mate); a positive
         # cur_mate (the mover delivers mate) never reaches TAGGABLE. Nothing
-        # currently enforces that from here, so assert it rather than silently
+        # currently enforces that from here, so check it rather than silently
         # returning the wrong sign for MATE_SCORE if it ever stops holding.
-        assert cur_mate < 0, (
-            f"_punisher_cp expected a losing mate score for a taggable move, "
-            f"got cur_mate={cur_mate}"
-        )
+        # Raised explicitly, not asserted: `python -O` strips an `assert`, and
+        # a guard that only exists in non-optimised runs is not a guard.
+        if cur_mate >= 0:
+            raise AssertionError(
+                f"_punisher_cp expected a losing mate score for a taggable move, "
+                f"got cur_mate={cur_mate}"
+            )
         return MATE_SCORE
     return -(cur_cp or 0)
 
@@ -162,13 +165,17 @@ def analyse_game(game: chess.pgn.Game, engine, refutation_plies: int = 8) -> Gam
         # so pv[0] must equal it. A different Analyse-shaped adapter that
         # didn't honour that would silently hand tag_self_blunder the wrong
         # slice, producing wrong concept tags with no crash. Turn that
-        # silent corruption into a loud one.
-        assert played.pv and played.pv[0] == move.uci(), (
-            "engine.analyse_move(board, move) must return a pv whose first "
-            "move is the played move itself (i.e. the search must be "
-            "restricted to `move`, as StockfishAdapter does via root_moves); "
-            f"got pv={played.pv!r} for played move {move.uci()!r}"
-        )
+        # silent corruption into a loud one. Raised explicitly rather than
+        # asserted: `python -O` (and PYTHONOPTIMIZE, which slim container
+        # entrypoints do set) strips an `assert` statement outright, which
+        # would put the silent corruption straight back.
+        if not played.pv or played.pv[0] != move.uci():
+            raise AssertionError(
+                "engine.analyse_move(board, move) must return a pv whose first "
+                "move is the played move itself (i.e. the search must be "
+                "restricted to `move`, as StockfishAdapter does via root_moves); "
+                f"got pv={played.pv!r} for played move {move.uci()!r}"
+            )
         cur_cp, cur_mate = _cp_and_mate(played)
 
         # SAN for the recommended move, so the renderer can tell a castle from

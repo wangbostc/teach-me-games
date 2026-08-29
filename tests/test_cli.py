@@ -326,5 +326,48 @@ def test_cli_rejects_a_pgn_containing_a_null_move(tmp_path, capsys, monkeypatch)
     assert "null move" in err.lower()
 
 
+def test_cli_rejects_a_variant_pgn_instead_of_crashing_in_the_engine(
+    tmp_path, capsys, monkeypatch
+):
+    # A Lichess "export my games" download can hold variant games alongside
+    # standard ones. Every other guard passes for one -- the moves parse
+    # cleanly under the variant's own rules, no parse errors, no null moves --
+    # and it then died inside python-chess as
+    # `EngineError: engine does not support UCI_Variant`, a traceback on exit 1.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "atomic.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[Variant "Atomic"]\n[White "me"]\n[Black "them"]\n'
+        '[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *\n'
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "atomic" in err.lower()
+    assert "standard chess" in err.lower()
+
+
+def test_cli_still_accepts_a_chess960_pgn(tmp_path, capsys, monkeypatch):
+    # Chess960 is standard chess on a shuffled back rank -- python-chess drives
+    # UCI_Chess960 for it and Stockfish supports it, so the variant guard must
+    # not sweep it up along with the rules variants.
+    _fake_success(monkeypatch)
+    pgn_file = tmp_path / "chess960.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[Variant "Chess960"]\n[White "me"]\n[Black "them"]\n'
+        '[Result "*"]\n[SetUp "1"]\n'
+        '[FEN "bqnbnrkr/pppppppp/8/8/8/8/PPPPPPPP/BQNBNRKR w KQkq - 0 1"]\n'
+        "\n1. Nf3 Nf6 *\n"
+    )
+
+    exit_code = main([str(pgn_file)])
+
+    assert exit_code == 0
+    assert "standard chess" not in capsys.readouterr().err.lower()
+
+
 def _explodes(*args, **kwargs):
     raise AssertionError("the engine must not be started for a rejected PGN")

@@ -112,6 +112,27 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    # A Lichess "export my games" download -- the same input the multi-game
+    # warning above exists for -- can contain variant games, and every guard
+    # above passes for one: the moves parse cleanly under the variant's own
+    # rules, with no parse errors and no null moves. python-chess then refuses
+    # to hand a non-standard board to an engine with no UCI_Variant option, so
+    # this reached the user as `EngineError: engine does not support
+    # UCI_Variant` and a traceback on exit 1. A Stockfish that DID accept the
+    # position would be worse: it would score an atomic or antichess game by
+    # standard-chess rules and report the result as fact. Chess960 is NOT
+    # rejected -- it is standard chess on a shuffled back rank, and
+    # python-chess drives UCI_Chess960 for it.
+    board = game.board()
+    if board.uci_variant != "chess":
+        print(
+            f"error: {pgn_path} is a "
+            f"{game.headers.get('Variant', board.uci_variant)} game; "
+            "tmg only analyses standard chess",
+            file=sys.stderr,
+        )
+        return 2
+
     with StockfishAdapter(path=args.engine, nodes=args.nodes, multipv=args.multipv) as engine:
         report = analyse_game(game, engine)
 
