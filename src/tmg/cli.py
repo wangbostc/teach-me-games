@@ -6,17 +6,37 @@ from pathlib import Path
 import chess
 import chess.pgn
 
-from tmg.engine.stockfish import DEFAULT_NODES, StockfishAdapter, stockfish_available
+from tmg.engine.stockfish import (
+    DEFAULT_MULTIPV,
+    DEFAULT_NODES,
+    StockfishAdapter,
+    stockfish_available,
+)
 from tmg.pipeline import analyse_game
 from tmg.report.render import render_text
+
+
+def _positive_int(text: str) -> int:
+    """argparse type for a count that must be at least 1.
+
+    Neither --nodes nor --multipv degrades gracefully at 0 or below. `go nodes
+    0` is how UCI spells "no node limit", so `--nodes 0` makes Stockfish search
+    forever and the CLI hangs with no output; a MultiPV below 1 leaves the
+    baseline search with no candidates at all, so every move goes unjudged and
+    the report's "summary:" line reports a clean game. Refuse both up front.
+    """
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or greater, got {value}")
+    return value
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tmg", description=__doc__)
     parser.add_argument("pgn", help="path to a PGN file")
-    parser.add_argument("--nodes", type=int, default=DEFAULT_NODES,
+    parser.add_argument("--nodes", type=_positive_int, default=DEFAULT_NODES,
                         help=f"engine node budget per position (default {DEFAULT_NODES:,})")
-    parser.add_argument("--multipv", type=int, default=3)
+    parser.add_argument("--multipv", type=_positive_int, default=DEFAULT_MULTIPV)
     parser.add_argument("--engine", default="stockfish", help="path to the Stockfish binary")
     parser.add_argument("--san", action="store_true",
                         help="show algebraic notation (off by default: the curriculum defers it)")
@@ -120,9 +140,22 @@ def main(argv: list[str] | None = None) -> int:
     # this reached the user as `EngineError: engine does not support
     # UCI_Variant` and a traceback on exit 1. A Stockfish that DID accept the
     # position would be worse: it would score an atomic or antichess game by
-    # standard-chess rules and report the result as fact. Chess960 is NOT
-    # rejected -- it is standard chess on a shuffled back rank, and
-    # python-chess drives UCI_Chess960 for it.
+    # standard-chess rules and report the result as fact.
+    #
+    # Chess960 is rejected too, even though the ENGINE handles it fine
+    # (python-chess drives UCI_Chess960) -- the concept tagger does not. The
+    # vendored lichess-puzzler detectors are standard-chess-only in three
+    # independent ways: util.moved_piece_type reads piece_type_at(to_square),
+    # which is EMPTY for python-chess's king-takes-rook castling encoding and
+    # trips a bare `assert(pt)`; util.is_castling tests
+    # square_distance > 1, which is simply false for a 960 castle where the
+    # king travels one square; and a 960 FEN cannot even express castling
+    # rights for a king off e1/e8, so chess.Board() silently drops them. The
+    # first crashes, the second and third are worse -- they yield confidently
+    # WRONG teaching content. Those files are vendored byte-identical against
+    # a pinned SHA (see NOTICE), so there is nothing to fix on our side of the
+    # boundary. Refusing 960 up front is the honest option; supporting it means
+    # forking the detectors, which is a milestone, not a guard.
     #
     # A Variant header python-chess does not know at all (a chess.com "Duck
     # Chess" or "Bughouse" export) does not even survive game.board(): its
@@ -141,10 +174,10 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    if board.uci_variant != "chess":
+    if board.uci_variant != "chess" or board.chess960:
         print(
             f"error: {pgn_path} is a "
-            f"{game.headers.get('Variant', board.uci_variant)} game; "
+            f"{game.headers.get('Variant') or board.uci_variant} game; "
             "tmg only analyses standard chess",
             file=sys.stderr,
         )

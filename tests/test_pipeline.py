@@ -22,7 +22,6 @@ class ScriptedEngine:
 
     def __init__(self, cps_by_ply):
         self._cps = cps_by_ply
-        self._calls = 0
 
     def _cp_for(self, key):
         return self._cps.get(key, 0)

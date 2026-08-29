@@ -1,6 +1,5 @@
 import chess
 import chess.engine
-import pytest
 from tmg.engine.protocol import EngineId, candidates_from_infos, fen4
 
 

@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 import tmg.cli
 from tmg.cli import main
 
@@ -350,25 +352,6 @@ def test_cli_rejects_a_variant_pgn_instead_of_crashing_in_the_engine(
     assert "standard chess" in err.lower()
 
 
-def test_cli_still_accepts_a_chess960_pgn(tmp_path, capsys, monkeypatch):
-    # Chess960 is standard chess on a shuffled back rank -- python-chess drives
-    # UCI_Chess960 for it and Stockfish supports it, so the variant guard must
-    # not sweep it up along with the rules variants.
-    _fake_success(monkeypatch)
-    pgn_file = tmp_path / "chess960.pgn"
-    pgn_file.write_text(
-        '[Event "test"]\n[Variant "Chess960"]\n[White "me"]\n[Black "them"]\n'
-        '[Result "*"]\n[SetUp "1"]\n'
-        '[FEN "bqnbnrkr/pppppppp/8/8/8/8/PPPPPPPP/BQNBNRKR w KQkq - 0 1"]\n'
-        "\n1. Nf3 Nf6 *\n"
-    )
-
-    exit_code = main([str(pgn_file)])
-
-    assert exit_code == 0
-    assert "standard chess" not in capsys.readouterr().err.lower()
-
-
 def _explodes(*args, **kwargs):
     raise AssertionError("the engine must not be started for a rejected PGN")
 
@@ -396,4 +379,44 @@ def test_cli_rejects_a_variant_python_chess_does_not_even_know(
     assert exit_code == 2
     assert "traceback" not in err.lower()
     assert "duck chess" in err.lower()
+    assert "standard chess" in err.lower()
+
+
+@pytest.mark.parametrize("flag", ["--nodes", "--multipv"])
+def test_cli_refuses_a_non_positive_search_budget(tmp_path, capsys, flag):
+    # Neither flag degrades gracefully at 0. `go nodes 0` is UCI for "no node
+    # limit", so --nodes 0 made Stockfish search forever and the CLI hung with
+    # no output and nothing to interrupt but ^C. A MultiPV below 1 leaves the
+    # baseline search with no candidates, so every move went unjudged and the
+    # report's "summary:" line announced a clean game.
+    pgn_file = tmp_path / "game.pgn"
+    pgn_file.write_text(PGN)
+
+    with pytest.raises(SystemExit) as exc:
+        main([str(pgn_file), flag, "0"])
+
+    assert exc.value.code == 2
+    assert "1 or greater" in capsys.readouterr().err
+
+
+def test_cli_rejects_chess960(tmp_path, capsys, monkeypatch):
+    # The ENGINE handles 960 fine; the vendored concept tagger does not, in
+    # three independent ways (see the guard's comment in cli.py). Two of them
+    # produce confidently wrong teaching content rather than crashing, which is
+    # the worse failure -- so 960 is refused at the boundary until the
+    # detectors are forked.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "chess960.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[Variant "Chess960"]\n[White "me"]\n[Black "them"]\n'
+        '[Result "*"]\n[FEN "bqnbnrkr/pppppppp/8/8/8/8/PPPPPPPP/BQNBNRKR w HFhf - 0 1"]\n'
+        "\n1. g3 g6 *\n"
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "chess960" in err.lower()
     assert "standard chess" in err.lower()

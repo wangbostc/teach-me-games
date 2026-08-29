@@ -41,11 +41,14 @@ _PROMOTION_WORDS = {"q": "queen", "r": "rook", "b": "bishop", "n": "knight"}
 def _castle_text(uci: str) -> str:
     """Both destinations for a castle, derived from the UCI's own squares.
 
-    Computed, not looked up in a table of the four standard-chess UCIs: the
-    CLI accepts Chess960, and python-chess emits Chess960 castling in the
-    king-takes-rook form ("g1h1", "b1a1", ...). A table keyed on e1g1/e1c1/
-    e8g8/e8c8 misses every one of those and fell through to "g1 to h1" --
-    which names the ROOK's square as the king's destination.
+    Computed, not looked up in a table of the four standard-chess UCIs. The
+    CLI rejects Chess960 (the vendored concept tagger cannot handle it), so
+    only those four reach this function today and the table would do -- but a
+    table fails SILENTLY and wrongly on anything else: python-chess emits
+    Chess960 castling in king-takes-rook form ("g1h1"), which missed the
+    table and fell through to "g1 to h1", naming the ROOK's square as the
+    king's destination. Deriving the squares costs two lines and cannot do
+    that, whoever calls it.
 
     The rules fix the destinations in both: the king ends on the g-file
     (kingside) or the c-file (queenside) of its own back rank, with the rook
@@ -126,6 +129,11 @@ def render_text(report: GameReport, show_san: bool = False) -> str:
     lines.append("")
 
     for move in report.moves:
+        # Most plies in a real game are unremarkable, and an unremarkable ply
+        # has nothing to print -- skip before describing it, not after.
+        if move.judgement is None and not move.violations:
+            continue
+
         # The report interleaves both players move by move, so naming the
         # mover explicitly in the header is load-bearing, not decorative:
         # without it "good for you" / "bad for you" (see _eval_text) and
@@ -134,9 +142,6 @@ def render_text(report: GameReport, show_san: bool = False) -> str:
         mover_label = "White" if move.color == "white" else "Black"
         described = _describe_move(move, show_san)
         evaluation = _eval_text(move.cur_cp, move.cur_mate)
-
-        if move.judgement is None and not move.violations:
-            continue
 
         header = f"{move.move_number}. {mover_label}: {described}   ({evaluation})"
         if move.judgement is not None:
