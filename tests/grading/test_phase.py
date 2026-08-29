@@ -21,6 +21,19 @@ def test_sparse_back_rank_forces_middlegame_even_with_many_pieces():
     assert phase_of(board) == Phase.MIDDLEGAME
 
 
+def test_middlegame_via_the_majors_minors_trigger_alone_not_backrank_sparsity():
+    # 8 majors/minors (queen, 2 rooks, 1 knight per side) -- above the <=6
+    # endgame threshold, at/under the <=10 middlegame threshold -- with BOTH
+    # back ranks holding exactly 4 occupied squares each (not <4), so
+    # _backrank_sparse is False and cannot be what routes this to MIDDLEGAME.
+    # Mutation-proven: every existing middlegame-producing case above reaches
+    # MIDDLEGAME via backrank sparsity, so mutating MIDDLEGAME_MAJORS_MINORS
+    # to 6 left every prior test green. This FEN can only reach MIDDLEGAME
+    # through the <=10 trigger itself.
+    board = chess.Board("rq2k2r/pppppppp/2n5/8/8/2N5/PPPPPPPP/RQ2K2R w KQkq - 0 1")
+    assert phase_of(board) == Phase.MIDDLEGAME
+
+
 @pytest.mark.parametrize("fen,expected", [
     ("8/8/4k3/8/8/4K3/8/8 w - - 0 1", Phase.ENDGAME),          # bare kings
     ("8/8/4k3/8/8/4K3/8/R7 w - - 0 1", Phase.ENDGAME),         # K+R vs K
