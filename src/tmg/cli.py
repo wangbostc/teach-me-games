@@ -46,11 +46,17 @@ def _positive_int(text: str) -> int:
 def _read_first_two_games(pgn_path: Path, encoding: str):
     """Read the first game, and peek for the next PLAYABLE one, in one open().
 
+    Returns `(first, second, peek_decode_failed)`.
+
     The peek happens while the handle is still open (a Lichess "export my
     games" download is the most likely real multi-game input). A decode error
     out there is a fault in trailing content past the game we can already use,
-    not in the game itself -- so it downgrades to "no more games" rather than
-    failing the run.
+    not in the game itself -- so it does not fail the run. It IS reported back
+    to the caller, though: "no more games" and "the rest of this file did not
+    decode" are different facts, and treating the second as the first silently
+    drops the multi-game warning for a file that plainly has more games. Which
+    of the two a non-UTF-8 multi-game PGN got depended on nothing but where
+    the 8 KiB read-ahead boundary happened to land.
 
     Move-less games are skipped rather than ending the peek. An export can
     carry an aborted (0-move) game ANYWHERE in the file, and stopping at the
@@ -64,13 +70,15 @@ def _read_first_two_games(pgn_path: Path, encoding: str):
     """
     with pgn_path.open(encoding=encoding) as handle:
         first = chess.pgn.read_game(handle)
+        peek_decode_failed = False
         try:
             second = chess.pgn.read_game(handle)
             while second is not None and not second.mainline_moves():
                 second = chess.pgn.read_game(handle)
         except UnicodeDecodeError:
             second = None
-        return first, second
+            peek_decode_failed = True
+        return first, second, peek_decode_failed
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -132,7 +140,18 @@ def main(argv: list[str] | None = None) -> int:
         # non-ASCII player name is unreadable under LANG=C (common in CI and
         # slim containers). "utf-8-sig" also tolerates a BOM.
         try:
-            game, more_games = _read_first_two_games(pgn_path, "utf-8-sig")
+            game, more_games, peek_failed = _read_first_two_games(
+                pgn_path, "utf-8-sig"
+            )
+            if peek_failed:
+                # The first game decoded cleanly and the rest of the file did
+                # not, so keep the game we already have -- re-decoding it as
+                # latin-1 would mangle names that were valid UTF-8 -- and
+                # re-derive the peek alone. Only `bool(mainline_moves())` is
+                # read off it, so latin-1 mojibake in the discarded copy is
+                # harmless, and the multi-game warning stops depending on
+                # where the read-ahead boundary fell.
+                _, more_games, _ = _read_first_two_games(pgn_path, "latin-1")
         except UnicodeDecodeError:
             # UTF-8 is what Lichess and chess.com emit, but it is NOT what the
             # PGN standard specifies: section 4.1 mandates ISO-8859-1, and the
@@ -143,11 +162,15 @@ def main(argv: list[str] | None = None) -> int:
             #
             # Latin-1 decodes ANY byte string, so the retry can never fail and
             # cannot be trusted on its own: a binary file would silently become
-            # a zero-move "game". Accept it only when it actually yields moves,
-            # and otherwise re-raise so the genuine "this is not a PGN" case
-            # still reaches the handler below.
-            game, more_games = _read_first_two_games(pgn_path, "latin-1")
-            if game is None or not game.mainline_moves():
+            # a zero-move "game". Accept it only when it actually yields a
+            # game with moves -- in the first slot or the peeked one -- and
+            # otherwise re-raise so the genuine "this is not a PGN" case still
+            # reaches the handler below. The peek has to count too: a download
+            # that leads with an aborted (0-move) game is still a readable PGN,
+            # and re-raising on it reported a file tmg had just parsed in full
+            # as "could not parse PGN file" instead of naming the empty game.
+            game, more_games, _ = _read_first_two_games(pgn_path, "latin-1")
+            if (game is None or not game.mainline_moves()) and more_games is None:
                 raise
         # A trailing non-PGN fragment also parses to a Game with placeholder
         # "?" headers and zero moves rather than None -- same as the

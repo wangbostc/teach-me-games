@@ -23,7 +23,10 @@ class MoveReport:
     cur_mate: int | None
     judgement: Judgement | None
     best_uci: str | None
-    best_san: str | None = None  # SAN of best_uci; only used to spot castling
+    # SAN of best_uci: shown verbatim under --san, and the ONLY way the
+    # renderer can tell a recommended castle from a king slide (the squares
+    # alone cannot -- see report/render.py).
+    best_san: str | None = None
     concepts: tuple[str, ...] = ()
     violations: tuple[Violation, ...] = ()
 

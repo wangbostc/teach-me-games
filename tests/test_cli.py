@@ -794,3 +794,65 @@ def test_an_unreadable_file_error_with_no_message_still_names_the_failure(
     assert "traceback" not in err.lower()
     assert "TimeoutError" in err
     assert not err.rstrip("\n").endswith(":")
+
+
+def test_a_latin1_pgn_that_leads_with_an_aborted_game_is_not_called_unparseable(
+    tmp_path, capsys, monkeypatch
+):
+    # REGRESSION: the latin-1 retry re-raised whenever the FIRST game had no
+    # moves, a guard aimed at binary files. An ISO-8859-1 "export my games"
+    # download that leads with an aborted (0-move) game hit it too, so a file
+    # tmg had just parsed in full came out as "could not parse PGN file" --
+    # undoing the aborted-first-game message for exactly the encoding the PGN
+    # standard specifies. The peek counts as evidence the file is readable;
+    # binary garbage yields no peeked game either, so it is still rejected.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+
+    pgn_file = tmp_path / "latin1_aborted_first.pgn"
+    pgn_file.write_bytes(
+        (
+            '[Event "aborted"]\n[White "Bogoljúbow"]\n[Black "them"]\n'
+            '[Result "*"]\n\n*\n\n'
+            '[Event "test"]\n[White "Bogoljúbow"]\n[Black "them"]\n'
+            '[Result "*"]\n\n1. e4 e5 *\n'
+        ).encode("latin-1")
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "could not parse" not in err.lower()
+    assert "has no moves" in err.lower()
+
+
+def test_a_multi_game_pgn_warns_even_when_only_the_peek_fails_to_decode(
+    tmp_path, capsys, monkeypatch
+):
+    # REGRESSION: a UnicodeDecodeError raised while PEEKING was downgraded to
+    # "no more games" without ever trying the latin-1 fallback, so a two-game
+    # non-UTF-8 PGN was analysed with an empty stderr -- the silent drop the
+    # multi-game warning exists to prevent. Whether the user got the warning
+    # depended only on where the 8 KiB read-ahead boundary fell: move the bad
+    # byte a few hundred bytes earlier and the error surfaces during the FIRST
+    # read, where the latin-1 retry already rescued the whole file. Game 1
+    # here is pure ASCII and game 2's bad byte sits a full chunk past it.
+    _fake_success(monkeypatch)
+
+    pgn_file = tmp_path / "peek_only_latin1.pgn"
+    padding = "x" * 40_000
+    pgn_file.write_bytes(
+        (
+            PGN
+            + "\n"
+            + '[Event "second"]\n[White "them"]\n[Black "me"]\n[Result "*"]\n'
+            + f"\n1. d4 {{{padding} Bogoljúbow}} d5 *\n"
+        ).encode("latin-1")
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 0
+    assert "more than one game" in err.lower()
