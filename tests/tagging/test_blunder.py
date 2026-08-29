@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 from tmg.tagging.blunder import tag_self_blunder
+from tmg.tagging import vendor
 from tmg.tagging.vendor import cook
 from tmg.tagging.vendor.model import Puzzle
 
@@ -35,7 +36,11 @@ def test_vendor_import_shim_produces_one_identity():
 
 def test_vendor_directory_is_not_on_sys_path():
     """Verify the shim doesn't permanently add to sys.path."""
-    vendor_dir = Path(__file__).parent.parent.parent / "tmg" / "tagging" / "vendor"
+    # Ask the package where it actually lives. Hand-assembling the path from
+    # this file's location silently pointed at <repo>/tmg/tagging/vendor -- the
+    # "src" segment was missing -- so the assertion below could never fail, no
+    # matter what the shim did to sys.path.
+    vendor_dir = Path(vendor.__file__).resolve().parent
     assert str(vendor_dir) not in sys.path, (
         "sys.path should not contain the vendor directory; "
         "it is added temporarily during import and removed by the shim's finally block"

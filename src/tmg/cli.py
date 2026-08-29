@@ -77,8 +77,31 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
+    # read_game does not raise on an unreadable move -- it records the error and
+    # stops adding moves, so the game silently ends there. Analysing a truncated
+    # game and printing a whole-game "summary:" line as if nothing were missing
+    # is the same trap the multi-game warning above exists to close.
+    if game.errors:
+        print(
+            f"warning: {pgn_path} has {len(game.errors)} move(s) this parser "
+            "could not read; analysing only the moves before the first of them",
+            file=sys.stderr,
+        )
+
     with StockfishAdapter(path=args.engine, nodes=args.nodes, multipv=args.multipv) as engine:
         report = analyse_game(game, engine)
+
+    # The report carries player names straight from the PGN, and the read path
+    # above deliberately accepts non-ASCII ones. stdout's encoding is still
+    # locale-dependent and its error handler is "strict", so under LANG=C
+    # printing "Bogoljubow" with its accent raised UnicodeEncodeError and exited
+    # 1 with a traceback -- defeating the very fix that made the file readable.
+    # (sys.stderr already defaults to "backslashreplace", so only stdout needs
+    # this.) Mangling one character beats crashing on the whole report.
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except (AttributeError, ValueError):  # pragma: no cover - non-TextIO stdout
+        pass
 
     print(render_text(report, show_san=args.san))
     return 0

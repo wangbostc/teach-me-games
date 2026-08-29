@@ -152,12 +152,23 @@ sys.exit(tmg.cli.main([sys.argv[1]]))
 """
 
 
-def _run_under_c_locale(pgn_file: Path):
+def _run_under_c_locale(pgn_file: Path, script: str = _READ_PATH_ONLY):
     import os
     import subprocess
 
+    import tmg
+
+    # The child gets a bare environment, so it does not inherit pytest's
+    # `pythonpath = ["src"]` (which is applied to this process's sys.path, not
+    # to PYTHONPATH). Without this the child dies with ModuleNotFoundError and
+    # the test fails for a reason that has nothing to do with locales, in every
+    # checkout where the package is not pip-installed.
+    src_dir = str(Path(tmg.__file__).resolve().parent.parent)
     env = {
         **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            [src_dir, *filter(None, [os.environ.get("PYTHONPATH", "")])]
+        ),
         "LC_ALL": "C",
         "LANG": "C",
         # Without these, CPython would quietly rescue the C locale by coercing
@@ -166,7 +177,7 @@ def _run_under_c_locale(pgn_file: Path):
         "PYTHONCOERCECLOCALE": "0",
     }
     return subprocess.run(
-        [sys.executable, "-c", _READ_PATH_ONLY, str(pgn_file)],
+        [sys.executable, "-c", script, str(pgn_file)],
         capture_output=True, text=True, env=env,
     )
 
@@ -186,3 +197,68 @@ def test_cli_reads_a_utf8_pgn_under_a_non_utf8_locale(tmp_path):
 
     assert "could not parse PGN file" not in result.stderr
     assert result.returncode == 0, result.stderr
+
+
+# Same child-process trick, but with the REAL renderer: the names read off the
+# PGN have to survive all the way to stdout, not just into the parser.
+_FULL_PATH = """
+import sys
+import tmg.cli
+from tmg.report.model import GameReport
+
+
+class _NoEngine:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+tmg.cli.stockfish_available = lambda path="stockfish": True
+tmg.cli.StockfishAdapter = _NoEngine
+tmg.cli.analyse_game = lambda game, engine: GameReport(
+    white=game.headers.get("White"), black=game.headers.get("Black"),
+    result=game.headers.get("Result"), moves=(), engine_id=None, nodes=0,
+)
+sys.exit(tmg.cli.main([sys.argv[1]]))
+"""
+
+
+def test_cli_prints_a_report_with_accented_names_under_a_non_utf8_locale(tmp_path):
+    # REGRESSION: reading the PGN as utf-8-sig fixed the input side but left the
+    # output side crashing on exactly the same file -- stdout under LANG=C is
+    # ASCII with a strict error handler, so printing the accented player name
+    # raised UnicodeEncodeError and exited 1 with a traceback. The earlier
+    # locale test could not see it: it stubs render_text out to "ok".
+    pgn_file = tmp_path / "accents.pgn"
+    pgn_file.write_bytes(UTF8_PGN_BYTES)
+
+    result = _run_under_c_locale(pgn_file, _FULL_PATH)
+
+    assert "UnicodeEncodeError" not in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert " vs " in result.stdout
+
+
+def test_cli_warns_when_the_pgn_has_a_move_it_cannot_read(tmp_path, capsys, monkeypatch):
+    # chess.pgn.read_game does not raise on an unreadable move: it records the
+    # error and stops adding moves. Without a warning the report silently covers
+    # only the first few plies and its "summary:" line reads as a verdict on the
+    # whole game.
+    _fake_success(monkeypatch)
+
+    pgn_file = tmp_path / "truncated.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n'
+        "\n1. e4 e5 2. Nf3 Nf6 3. Qxq9 Nc6 4. Bb5 a6 *\n"
+    )
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 0
+    assert "could not read" in err.lower()
