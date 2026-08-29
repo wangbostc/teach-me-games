@@ -43,25 +43,43 @@ class StockfishAdapter:
 
     def __enter__(self) -> "StockfishAdapter":
         self._engine = chess.engine.SimpleEngine.popen_uci(self._path, setpgrp=True)
-        self._engine.configure({"Threads": self._threads})
         try:
-            net_hash = str(self._engine.options["EvalFile"].default)
-        except KeyError:
-            # Not every build/version exposes EvalFile. The net hash is a cache-key
-            # component, not a correctness input, so a missing value must not crash
-            # startup.
-            net_hash = "unknown"
-        self._engine_id = EngineId(
-            name=self._engine.id.get("name", "unknown"),
-            net_hash=net_hash,
-            threads=self._threads,
-        )
+            self._engine.configure({"Threads": self._threads})
+            try:
+                net_hash = str(self._engine.options["EvalFile"].default)
+            except KeyError:
+                # Not every build/version exposes EvalFile. The net hash is a
+                # cache-key component, not a correctness input, so a missing value
+                # must not crash startup.
+                net_hash = "unknown"
+            self._engine_id = EngineId(
+                name=self._engine.id.get("name", "unknown"),
+                net_hash=net_hash,
+                threads=self._threads,
+            )
+        except Exception:
+            # The subprocess is already spawned at this point. Python only calls
+            # __exit__ if __enter__ returns, so an unguarded failure here (a crash
+            # between spawn and configure, or configure() rejecting an option)
+            # would leak the child process. Best-effort clean up before
+            # propagating the original failure.
+            self._quit_engine()
+            raise
         return self
 
     def __exit__(self, *exc_info) -> None:
+        self._quit_engine()
+
+    def _quit_engine(self) -> None:
         if self._engine is not None:
-            self._engine.quit()
-            self._engine = None
+            engine, self._engine = self._engine, None
+            try:
+                engine.quit()
+            except Exception:
+                # The engine may already be dead -- crashed on its own, or as the
+                # very failure this cleanup is responding to. Never let cleanup
+                # mask a real in-flight exception.
+                pass
 
     @property
     def _limit(self) -> chess.engine.Limit:

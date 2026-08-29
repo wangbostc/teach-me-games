@@ -71,12 +71,32 @@ not just assumed: `test_a_fixed_node_budget_is_reproducible_across_processes`
 runs the same analysis twice from two independent Stockfish subprocesses and
 asserts identical candidates. Passed on 4 separate runs.
 
-## Equal-effort grading: a known asymmetry
+## Equal-effort grading: a known asymmetry (direction unverified)
 
 `analyse` uses the same `nodes` budget as `analyse_move`, but `analyse` runs
 `MultiPV=3`, splitting that budget across three root lines, while
 `analyse_move` gives its one move the full budget via `root_moves=[move]`
 (UCI `searchmoves`). "Equal effort" here means equal *nodes*, not equal
-per-line depth. The bias is benign — the played move gets the deeper look of
-the two — so this under-reports blunders rather than manufacturing them, but
-it is worth naming explicitly rather than leaving implicit.
+per-line depth — the played move is searched alone with the whole budget,
+while each of the engine's top-3 lines gets roughly a third of it.
+
+**The direction and magnitude of the resulting bias are unverified.** Both
+directions are defensible and no measurement has been made:
+
+- Splitting the budget three ways could make the engine's own "best" line
+  look shallower than it really is, making the played move look relatively
+  better than it should — under-reporting blunders.
+- Equally plausibly, giving the played move (the one under suspicion) the
+  deeper, undiluted search is exactly what could surface a hidden tactical
+  refutation that a shallower search would miss — search values are not
+  monotonic in depth, and this effect is largest in sharp positions, which is
+  precisely where blunders live and where the classifier's threshold has to
+  discriminate. That would *reveal* blunders, not hide them.
+
+This is an intentional trade: restructuring to a true `MultiPV=1` baseline for
+both searches would add a third search per ply and blow the ~2 minute game
+budget (see the Step 8 measurements above). The asymmetry stays; it is
+recorded here as an **open question**, to be settled empirically by the later
+hand-graded eval milestone — by comparing `MultiPV=1` (true equal-effort
+baseline) against the current `MultiPV=3` best-line cp across a sample of
+positions.
