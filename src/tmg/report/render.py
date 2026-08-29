@@ -129,8 +129,16 @@ def render_text(report: GameReport, show_san: bool = False) -> str:
             header += f"   <- {_LABEL[move.judgement]}"
         lines.append(header)
 
-        if move.best_uci and move.judgement is not None:
-            better = move.best_uci if show_san else describe_uci(move.best_uci)
+        # `move.best_uci != move.uci` guard: the baseline and the played-move
+        # search are separate searches, so the engine's own top choice can
+        # still carry a judgement. Never advise the learner to play the move
+        # they just played.
+        if move.best_uci and move.judgement is not None and move.best_uci != move.uci:
+            best_is_castling = bool(move.best_san) and move.best_san.startswith("O-O")
+            if show_san and move.best_san:
+                better = move.best_san
+            else:
+                better = describe_uci(move.best_uci, is_castling=best_is_castling)
             lines.append(f"      better was {better}")
         concepts = _teaching_concepts(move.concepts)
         if concepts:

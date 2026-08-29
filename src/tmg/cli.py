@@ -39,7 +39,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        with pgn_path.open() as handle:
+        # Explicit encoding: the default is locale-dependent, so a PGN with a
+        # non-ASCII player name is unreadable under LANG=C (common in CI and
+        # slim containers). "utf-8-sig" also tolerates a BOM.
+        with pgn_path.open(encoding="utf-8-sig") as handle:
             game = chess.pgn.read_game(handle)
             # Peek for a second game while the handle is still open (a Lichess
             # "export my games" download is the most likely real multi-game

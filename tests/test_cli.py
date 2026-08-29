@@ -1,4 +1,5 @@
 import io
+import sys
 from pathlib import Path
 
 from tmg.cli import main
@@ -111,3 +112,77 @@ def test_cli_stays_silent_on_trailing_junk_with_no_second_game(tmp_path, capsys,
 
     assert exit_code == 0
     assert out.err == ""
+
+
+# A PGN whose player names carry the accents real player names carry. Held as
+# bytes so the fixture is exact regardless of this file's own encoding.
+UTF8_PGN_BYTES = (
+    '[Event "test"]\n'
+    '[White "Bogoljúbow"]\n'
+    '[Black "Alaékhïne"]\n'
+    '[Result "*"]\n'
+    "\n"
+    "1. e4 e5 2. Nf3 Nc6 *\n"
+).encode("utf-8")
+
+# Runs the CLI's read path in a child process so the locale can actually be
+# forced. Monkeypatching `locale` does not work: CPython's `open()` resolves
+# the default encoding in C, below anything a test can reach.
+_READ_PATH_ONLY = """
+import sys
+import tmg.cli
+
+
+class _NoEngine:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+tmg.cli.stockfish_available = lambda path="stockfish": True
+tmg.cli.StockfishAdapter = _NoEngine
+tmg.cli.analyse_game = lambda game, engine: game
+tmg.cli.render_text = lambda report, show_san=False: "ok"
+sys.exit(tmg.cli.main([sys.argv[1]]))
+"""
+
+
+def _run_under_c_locale(pgn_file: Path):
+    import os
+    import subprocess
+
+    env = {
+        **os.environ,
+        "LC_ALL": "C",
+        "LANG": "C",
+        # Without these, CPython would quietly rescue the C locale by coercing
+        # it to UTF-8 -- and the regression would not reproduce.
+        "PYTHONUTF8": "0",
+        "PYTHONCOERCECLOCALE": "0",
+    }
+    return subprocess.run(
+        [sys.executable, "-c", _READ_PATH_ONLY, str(pgn_file)],
+        capture_output=True, text=True, env=env,
+    )
+
+
+def test_cli_reads_a_utf8_pgn_under_a_non_utf8_locale(tmp_path):
+    # REGRESSION: `pgn_path.open()` used the locale's encoding, so under LANG=C
+    # -- the default in slim containers and many CI images -- a perfectly valid
+    # PGN with an accented player name exited 2 as "could not parse PGN file".
+    # With a BOM on the front too: Windows editors and some Lichess exports
+    # add one, and "utf-8-sig" is what eats it. python-chess happens to strip
+    # a stray BOM itself, so this half is belt-and-braces -- the accents are
+    # what actually reproduce the failure.
+    pgn_file = tmp_path / "accents.pgn"
+    pgn_file.write_bytes(b"\xef\xbb\xbf" + UTF8_PGN_BYTES)
+
+    result = _run_under_c_locale(pgn_file)
+
+    assert "could not parse PGN file" not in result.stderr
+    assert result.returncode == 0, result.stderr

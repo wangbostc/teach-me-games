@@ -1,7 +1,7 @@
 """Typed results. Everything the renderer prints comes from here -- and in M2,
 everything the LLM is allowed to talk about comes from here too.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from tmg.engine.protocol import EngineId
 from tmg.grading.classify import Judgement
@@ -23,6 +23,7 @@ class MoveReport:
     cur_mate: int | None
     judgement: Judgement | None
     best_uci: str | None
+    best_san: str | None = None  # SAN of best_uci; only used to spot castling
     concepts: tuple[str, ...] = ()
     violations: tuple[Violation, ...] = ()
 
