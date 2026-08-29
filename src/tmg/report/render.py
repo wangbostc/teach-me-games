@@ -34,10 +34,47 @@ def _teaching_concepts(concepts: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(concept for concept in concepts if concept not in _NOISE_CONCEPTS)
 
 
+_PROMOTION_WORDS = {"q": "queen", "r": "rook", "b": "bishop", "n": "knight"}
+
+# Keyed by (from, to) squares, which fully determine the rook's own move for a
+# legal castle in standard (non-Chess960) chess -- the only variant this
+# project supports. NOT used to DETECT castling (a queen or rook sliding
+# between the same two squares emits the identical UCI) -- describe_uci's
+# is_castling flag must come from SAN ("O-O"/"O-O-O"), which python-chess
+# only emits for a genuine castling move.
+_CASTLE_TEXT = {
+    "e1g1": "castling kingside (king to g1, rook to f1)",
+    "e1c1": "castling queenside (king to c1, rook to d1)",
+    "e8g8": "castling kingside (king to g8, rook to f8)",
+    "e8c8": "castling queenside (king to c8, rook to d8)",
+}
+
+
+def describe_uci(uci: str, is_castling: bool = False) -> str:
+    """Plain-language description of a UCI move: square names, no SAN.
+
+    Handles the two cases plain uci[:2]/uci[2:4] slicing gets wrong: promotion
+    (the promoted piece would otherwise be silently dropped, so "e7 to e8" is
+    ambiguous between queening and underpromoting) and castling (the rook's
+    move would otherwise go unmentioned).
+
+    `is_castling` must be derived from SAN ("O-O"/"O-O-O"), not from the UCI
+    squares themselves -- e1g1 is also the UCI for a queen or rook sliding
+    from e1 to g1, which is not a castle.
+    """
+    if is_castling:
+        return _CASTLE_TEXT.get(uci, f"{uci[:2]} to {uci[2:4]}")
+    frm, to = uci[:2], uci[2:4]
+    if len(uci) == 5:
+        piece = _PROMOTION_WORDS.get(uci[4], uci[4])
+        return f"{frm} to {to}, promoting to a {piece}"
+    return f"{frm} to {to}"
+
+
 def _describe_move(move: MoveReport, show_san: bool) -> str:
     if show_san:
         return move.san
-    return f"{move.uci[:2]} to {move.uci[2:4]}"
+    return describe_uci(move.uci, is_castling=move.san.startswith("O-O"))
 
 
 def _eval_text(cp: int | None, mate: int | None) -> str:
@@ -75,24 +112,25 @@ def render_text(report: GameReport, show_san: bool = False) -> str:
     lines.append("")
 
     for move in report.moves:
-        dots = "." if move.color == "white" else "..."
-        prefix = f"{move.move_number}{dots}"
+        # The report interleaves both players move by move, so naming the
+        # mover explicitly in the header is load-bearing, not decorative:
+        # without it "good for you" / "bad for you" (see _eval_text) and
+        # "Your <piece>" (see principles.py) silently change whose "you" is
+        # meant from one line to the next.
+        mover_label = "White" if move.color == "white" else "Black"
         described = _describe_move(move, show_san)
         evaluation = _eval_text(move.cur_cp, move.cur_mate)
 
         if move.judgement is None and not move.violations:
             continue
 
-        header = f"{prefix} {described}   ({evaluation})"
+        header = f"{move.move_number}. {mover_label}: {described}   ({evaluation})"
         if move.judgement is not None:
             header += f"   <- {_LABEL[move.judgement]}"
         lines.append(header)
 
         if move.best_uci and move.judgement is not None:
-            better = (
-                move.best_uci if show_san
-                else f"{move.best_uci[:2]} to {move.best_uci[2:4]}"
-            )
+            better = move.best_uci if show_san else describe_uci(move.best_uci)
             lines.append(f"      better was {better}")
         concepts = _teaching_concepts(move.concepts)
         if concepts:
