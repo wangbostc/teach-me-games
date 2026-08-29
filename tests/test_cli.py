@@ -720,3 +720,77 @@ def test_the_missing_engine_message_names_the_path_that_was_tried(tmp_path, caps
 
     assert exit_code == 2
     assert "/opt/nope/stockfish" in err
+
+
+ABORTED_PGN = '[Event "aborted"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n\n*\n\n'
+
+
+def test_an_aborted_game_between_two_real_ones_still_warns_about_the_rest(
+    tmp_path, capsys, monkeypatch
+):
+    # REGRESSION: the peek stopped at the very next game and required THAT one
+    # to have moves. An "export my games" download interleaves aborted (0-move)
+    # games freely, so `real, aborted, real` looked like a single-game file:
+    # the third game was silently dropped with no warning anywhere -- exactly
+    # the trap the multi-game warning exists to close.
+    _fake_success(monkeypatch)
+
+    pgn_file = tmp_path / "real_aborted_real.pgn"
+    pgn_file.write_text(PGN + "\n" + ABORTED_PGN + PGN)
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 0
+    assert "more than one game" in err.lower()
+
+
+def test_two_leading_aborted_games_do_not_read_as_no_game_found(
+    tmp_path, capsys, monkeypatch
+):
+    # The other half of the same defect: a download can lead with more than one
+    # aborted game, and peeking exactly one game ahead put the file straight
+    # back on "no game found" -- flatly wrong for a file that holds a playable
+    # game -- undoing the message the single-aborted-game case already fixed.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+
+    pgn_file = tmp_path / "two_aborted_first.pgn"
+    pgn_file.write_text(ABORTED_PGN + ABORTED_PGN + PGN)
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "no game found" not in err.lower()
+    assert "has no moves" in err.lower()
+
+
+def test_an_unreadable_file_error_with_no_message_still_names_the_failure(
+    tmp_path, capsys, monkeypatch
+):
+    # An OSError can arrive with neither an errno nor a message -- a bare
+    # TimeoutError off a stalled network mount is one, and it is an OSError
+    # subclass. `exc.strerror or exc` then rendered as nothing at all:
+    # "error: could not read PGN file: game.pgn: ". The engine handler further
+    # down already defends against exactly this; the read path must too.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    pgn_file = tmp_path / "stalled.pgn"
+    pgn_file.write_text(PGN)
+
+    real_open = Path.open
+
+    def stalls(self, *args, **kwargs):
+        if self == pgn_file:
+            raise TimeoutError()  # no errno, no strerror, empty str()
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", stalls)
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "TimeoutError" in err
+    assert not err.rstrip("\n").endswith(":")

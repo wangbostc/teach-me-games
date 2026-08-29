@@ -44,18 +44,30 @@ def _positive_int(text: str) -> int:
 
 
 def _read_first_two_games(pgn_path: Path, encoding: str):
-    """Read the first game, and peek for a second one, in a single open().
+    """Read the first game, and peek for the next PLAYABLE one, in one open().
 
     The peek happens while the handle is still open (a Lichess "export my
     games" download is the most likely real multi-game input). A decode error
     out there is a fault in trailing content past the game we can already use,
     not in the game itself -- so it downgrades to "no more games" rather than
     failing the run.
+
+    Move-less games are skipped rather than ending the peek. An export can
+    carry an aborted (0-move) game ANYWHERE in the file, and stopping at the
+    first one reported "no more games" for a file that still held playable
+    ones: `real, aborted, real` printed no multi-game warning at all and
+    silently dropped the third game -- the exact trap that warning exists to
+    close -- and two aborted games at the head of a download came out as
+    "no game found" instead of naming the empty first game. Every one of these
+    reads is bounded by the file itself and only ever skips games with no
+    moves, so the caller can treat a non-None result as "there is more here".
     """
     with pgn_path.open(encoding=encoding) as handle:
         first = chess.pgn.read_game(handle)
         try:
             second = chess.pgn.read_game(handle)
+            while second is not None and not second.mainline_moves():
+                second = chess.pgn.read_game(handle)
         except UnicodeDecodeError:
             second = None
         return first, second
@@ -141,7 +153,8 @@ def main(argv: list[str] | None = None) -> int:
         # "?" headers and zero moves rather than None -- same as the
         # single-game case below -- so require actual moves before calling it
         # a second game, or this would warn on every file with trailing
-        # whitespace or a stray comment.
+        # whitespace or a stray comment. (The peek already skips those; the
+        # test is kept so this line stays true of whatever it is handed.)
         has_more_games = more_games is not None and bool(more_games.mainline_moves())
     except UnicodeDecodeError:
         print(f"error: could not parse PGN file: {pgn_path}", file=sys.stderr)
@@ -151,9 +164,13 @@ def main(argv: list[str] | None = None) -> int:
         # NOT say this process can read it. A permission-denied (or any other
         # OS-level) failure must exit 2 with a message like every other
         # rejection here, not escape main() as a traceback on exit 1.
+        # `or type(exc).__name__` for the same reason the engine handler
+        # below needs it: an OSError can arrive with neither an errno nor a
+        # message (a bare TimeoutError from a stalled network mount is one),
+        # and "could not read PGN file: game.pgn: " names no failure at all.
+        detail = exc.strerror or str(exc) or type(exc).__name__
         print(
-            f"error: could not read PGN file: {pgn_path}: "
-            f"{exc.strerror or exc}",
+            f"error: could not read PGN file: {pgn_path}: {detail}",
             file=sys.stderr,
         )
         return 2
