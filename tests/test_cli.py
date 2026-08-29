@@ -420,3 +420,80 @@ def test_cli_rejects_chess960(tmp_path, capsys, monkeypatch):
     assert exit_code == 2
     assert "chess960" in err.lower()
     assert "standard chess" in err.lower()
+
+
+def test_cli_rejects_an_unreadable_file_without_a_traceback(tmp_path, capsys, monkeypatch):
+    # is_file() says the path exists and is a regular file; it does NOT say
+    # this process can read it. Only UnicodeDecodeError was handled, so a
+    # permission-denied PGN escaped main() as a traceback on exit 1 instead of
+    # the exit-2-with-a-message contract every other rejection here honours.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    pgn_file = tmp_path / "unreadable.pgn"
+    pgn_file.write_text(PGN)
+
+    real_open = Path.open
+
+    def refuse(self, *args, **kwargs):
+        if self == pgn_file:
+            raise PermissionError(13, "Permission denied")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", refuse)
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "could not read" in err.lower()
+
+
+def test_no_parse_warning_is_printed_for_a_pgn_that_is_then_rejected(
+    tmp_path, capsys, monkeypatch
+):
+    # An unrecognised [Variant] lands in game.errors too, so the
+    # unreadable-passage warning used to fire just before the variant guard
+    # rejected the file -- blaming move parsing for a header problem, and
+    # warning about "this report" when no report is ever produced. Both
+    # warnings now come after every guard that can still refuse the file.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "duck.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[Variant "Duck Chess"]\n[White "me"]\n[Black "them"]\n'
+        '[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *\n'
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "may be missing from this report" not in err
+    assert "duck chess" in err.lower()
+
+
+def test_cli_reports_an_engine_refusal_without_a_traceback(tmp_path, capsys, monkeypatch):
+    # The guards cover the inputs we can recognise ourselves; the engine can
+    # still refuse a run for reasons only it knows. `--multipv 600` is over
+    # Stockfish's MultiPV max of 500 and python-chess raises rather than
+    # clamping, so this exited 1 with a traceback -- after the subprocess had
+    # already been started. EngineTerminatedError (a mid-game engine crash)
+    # subclasses EngineError and takes the same path.
+    import chess.engine
+
+    def _refuses(**kwargs):
+        raise chess.engine.EngineError(
+            "expected value for option 'MultiPV' to be at most 500, got: 600"
+        )
+
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _refuses)
+    pgn_file = tmp_path / "game.pgn"
+    pgn_file.write_text(PGN)
+
+    exit_code = main([str(pgn_file), "--multipv", "600"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "at most 500" in err

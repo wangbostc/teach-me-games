@@ -87,7 +87,12 @@ class StockfishAdapter:
 
     def analyse(self, board: chess.Board) -> Analysis:
         """Rank the top `multipv` moves in `board`."""
-        assert self._engine is not None, "use StockfishAdapter as a context manager"
+        # Raised explicitly, not asserted: `python -O` (and PYTHONOPTIMIZE,
+        # which slim container entrypoints set) strips an `assert`, and the
+        # next line would then die with a bare AttributeError on None
+        # instead of naming the actual misuse.
+        if self._engine is None:
+            raise AssertionError("use StockfishAdapter as a context manager")
         infos = self._engine.analyse(board, self._limit, multipv=self._multipv)
         return Analysis(
             candidates=candidates_from_infos(infos, mover=board.turn),
@@ -103,7 +108,12 @@ class StockfishAdapter:
         shallow evaluation of the played move against a deep one of the best move
         would manufacture blunders that are not there.
         """
-        assert self._engine is not None, "use StockfishAdapter as a context manager"
+        # Raised explicitly, not asserted: `python -O` (and PYTHONOPTIMIZE,
+        # which slim container entrypoints set) strips an `assert`, and the
+        # next line would then die with a bare AttributeError on None
+        # instead of naming the actual misuse.
+        if self._engine is None:
+            raise AssertionError("use StockfishAdapter as a context manager")
         infos = self._engine.analyse(
             board, self._limit, multipv=1, root_moves=[move]
         )

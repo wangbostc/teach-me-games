@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import chess
+import chess.engine
 import chess.pgn
 
 from tmg.engine.stockfish import (
@@ -83,6 +84,17 @@ def main(argv: list[str] | None = None) -> int:
     except UnicodeDecodeError:
         print(f"error: could not parse PGN file: {pgn_path}", file=sys.stderr)
         return 2
+    except OSError as exc:
+        # is_file() above says the path exists and is a regular file; it does
+        # NOT say this process can read it. A permission-denied (or any other
+        # OS-level) failure must exit 2 with a message like every other
+        # rejection here, not escape main() as a traceback on exit 1.
+        print(
+            f"error: could not read PGN file: {pgn_path}: "
+            f"{exc.strerror or exc}",
+            file=sys.stderr,
+        )
+        return 2
 
     # A garbage (non-PGN) file doesn't fail to parse -- it parses to a Game with
     # placeholder "?" headers and zero moves. Treat that the same as "no game
@@ -91,37 +103,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: no game found in {pgn_path}", file=sys.stderr)
         return 2
 
-    if has_more_games:
-        print(
-            f"warning: {pgn_path} contains more than one game; "
-            "analysing only the first",
-            file=sys.stderr,
-        )
-
-    # read_game does not raise on an unreadable token -- it records the error and
-    # skips ahead, and an error on a MAINLINE move stops the game there, so the
-    # report can silently cover only part of the game while its "summary:" line
-    # reads as a verdict on all of it. That is the same trap the multi-game
-    # warning above exists to close.
-    #
-    # `game.errors` does NOT mean "the game was truncated", though, and one
-    # entry does not mean one lost move: a game-termination marker inside a
-    # variation ("1. e4 e5 (1... c5 1-0) 2. Nf3 Nc6 *") records two errors
-    # while the mainline still parses in full, and an unrecognised token is
-    # dropped silently so the error lands on the NEXT move instead. So the
-    # warning reports how much the parser choked on, and says moves MAY be
-    # missing -- it must not assert a truncation it cannot actually see.
-    if game.errors:
-        print(
-            f"warning: {pgn_path} has {len(game.errors)} passage(s) this parser "
-            "could not read; some moves may be missing from this report",
-            file=sys.stderr,
-        )
-
     # A null move ("--", used in analysis PGNs to pass the turn) parses to
-    # Move.null() and records NO parse error, so the warning above does not see
-    # it. It would reach StockfishAdapter.analyse_move as `searchmoves 0000`,
-    # which returns no candidates and raises out of main() with a traceback.
+    # Move.null() and records NO parse error, so the unreadable-passage warning
+    # below cannot see it. It would reach StockfishAdapter.analyse_move as
+    # `searchmoves 0000`, which returns no candidates and raises out of main()
+    # with a traceback.
     # There is no move quality to judge for a move nobody played, so refuse the
     # file rather than annotate around a hole in it.
     if any(move == chess.Move.null() for move in game.mainline_moves()):
@@ -183,8 +169,52 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    with StockfishAdapter(path=args.engine, nodes=args.nodes, multipv=args.multipv) as engine:
-        report = analyse_game(game, engine)
+    # Both warnings are about the report that is ABOUT to be produced, so they
+    # come after every guard that can still refuse the file. Emitted earlier,
+    # a rejected PGN got a "some moves may be missing from this report"
+    # warning for a report that never existed -- and an unknown [Variant]
+    # header lands in `game.errors` too, so that warning blamed move parsing
+    # for what the variant guard below is actually about to reject.
+    if has_more_games:
+        print(
+            f"warning: {pgn_path} contains more than one game; "
+            "analysing only the first",
+            file=sys.stderr,
+        )
+
+    # read_game does not raise on an unreadable token -- it records the error and
+    # skips ahead, and an error on a MAINLINE move stops the game there, so the
+    # report can silently cover only part of the game while its "summary:" line
+    # reads as a verdict on all of it. That is the same trap the multi-game
+    # warning above exists to close.
+    #
+    # `game.errors` does NOT mean "the game was truncated", though, and one
+    # entry does not mean one lost move: a game-termination marker inside a
+    # variation ("1. e4 e5 (1... c5 1-0) 2. Nf3 Nc6 *") records two errors
+    # while the mainline still parses in full, and an unrecognised token is
+    # dropped silently so the error lands on the NEXT move instead. So the
+    # warning reports how much the parser choked on, and says moves MAY be
+    # missing -- it must not assert a truncation it cannot actually see.
+    if game.errors:
+        print(
+            f"warning: {pgn_path} has {len(game.errors)} passage(s) this parser "
+            "could not read; some moves may be missing from this report",
+            file=sys.stderr,
+        )
+
+    try:
+        with StockfishAdapter(path=args.engine, nodes=args.nodes, multipv=args.multipv) as engine:
+            report = analyse_game(game, engine)
+    except chess.engine.EngineError as exc:
+        # The guards above cover the inputs we can recognise ourselves; the
+        # engine can still refuse a run for reasons only it knows -- an option
+        # value outside the range this build accepts (`--multipv 600` exceeds
+        # Stockfish's MultiPV max of 500, and python-chess raises rather than
+        # clamping), a build missing an option we set, or the subprocess dying
+        # mid-game (EngineTerminatedError subclasses EngineError). Report it
+        # and exit 2 rather than ending the run on a traceback.
+        print(f"error: the engine could not run this analysis: {exc}", file=sys.stderr)
+        return 2
 
     # The report carries player names straight from the PGN, and the read path
     # above deliberately accepts non-ASCII ones. stdout's encoding is still
