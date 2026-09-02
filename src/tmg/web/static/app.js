@@ -23,6 +23,17 @@ function showReport(text) {
   section.textContent = text;
 }
 
+function showStartError(message) {
+  let el = document.getElementById("start-error");
+  if (!el) {
+    el = document.createElement("p");
+    el.id = "start-error";
+    el.style.color = "#b00";
+    document.getElementById("setup").appendChild(el);
+  }
+  el.textContent = message;
+}
+
 function maybeFetchReport(gameOver) {
   if (!gameOver) return;
   apiGet("/api/game/report").then(({ ok, data }) => {
@@ -93,7 +104,10 @@ function startGame() {
     difficulty: difficulty,
     learning_mode: learningMode,
   }).then(({ ok, data }) => {
-    if (!ok) return;
+    if (!ok) {
+      showStartError(data.detail || "Failed to start game.");
+      return;
+    }
     document.getElementById("setup").hidden = true;
     document.getElementById("game").hidden = false;
 
