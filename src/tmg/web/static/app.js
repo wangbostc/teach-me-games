@@ -50,9 +50,17 @@ function renderOptions() {
     data.options.forEach((option) => {
       const div = document.createElement("div");
       div.className = "option";
-      div.innerHTML =
-        "<strong>" + option.move_text + "</strong> (" + option.eval_text + ")<br/>" +
-        option.explanation;
+      // option.move_text and option.eval_text are our own rendered text,
+      // but option.explanation is claude-generated prose -- the one place
+      // in this app where model output reaches the DOM. Insert all three
+      // as text nodes (never innerHTML) so nothing it contains is ever
+      // parsed as markup.
+      const strong = document.createElement("strong");
+      strong.textContent = option.move_text;
+      div.appendChild(strong);
+      div.appendChild(document.createTextNode(" (" + option.eval_text + ")"));
+      div.appendChild(document.createElement("br"));
+      div.appendChild(document.createTextNode(option.explanation));
       div.addEventListener("click", () => playMove(option.uci));
       container.appendChild(div);
     });
