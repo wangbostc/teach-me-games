@@ -18,6 +18,19 @@ def test_cache_key_includes_everything_that_changes_an_eval():
         assert part in key
 
 
+def test_cache_key_distinguishes_skill_level():
+    # Skill Level changes the engine's own move choice (see stockfish.py's
+    # module docstring), so two adapters differing only in skill_level must
+    # not collide on the same cache key -- finding 5 of the web play-mode
+    # review: the field used to be entirely absent from EngineId.
+    fen4_value = "8/8/8/8/8/8/8/K6k w - -"
+    full_strength = EngineId(name="Stockfish 18", net_hash="nn-test", threads=1)
+    weakened = EngineId(name="Stockfish 18", net_hash="nn-test", threads=1, skill_level=3)
+    assert full_strength.cache_key(fen4_value, nodes=500_000) != weakened.cache_key(
+        fen4_value, nodes=500_000
+    )
+
+
 def test_scores_are_converted_to_mover_point_of_view():
     # chess.engine reports score relative to the side to move. Black to move with
     # PovScore(Cp(50), BLACK) means BLACK is 50cp better -> mover cp is +50.

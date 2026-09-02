@@ -5,6 +5,18 @@ CONSTRAINTS (docs/PLAN.md section 13):
   - Threads=1 always -- multi-threaded search is non-deterministic even at a
     fixed node count, which would invalidate the eval cache and the probe baseline.
   - setpgrp=True so `uvicorn --reload` cannot leak orphaned stockfish children.
+
+DETERMINISM DOES NOT HOLD WHEN `skill_level` IS SET. The "go nodes N at
+Threads=1 is reproducible" guarantee above is about SEARCH: it makes the
+engine evaluate a position the same way every time. Stockfish's "Skill
+Level" UCI option operates on top of that, after the search -- it picks
+pseudo-randomly among the engine's own top candidate moves to imitate a
+weaker player, by design. An adapter constructed with `skill_level` (used
+only for the difficulty-weakened play engine, see web/play_engine.py) can
+therefore return a different move from an identical position on two runs
+at the identical node budget. Never use a `skill_level` adapter for cached
+evaluations, the report/analysis engines, or anything else that assumes
+"same inputs, same output" -- see docs/ENGINE_PIN.md.
 """
 from __future__ import annotations
 
@@ -67,6 +79,7 @@ class StockfishAdapter:
                 name=self._engine.id.get("name", "unknown"),
                 net_hash=net_hash,
                 threads=self._threads,
+                skill_level=self._skill_level,
             )
         except Exception:
             # The subprocess is already spawned at this point. Python only calls

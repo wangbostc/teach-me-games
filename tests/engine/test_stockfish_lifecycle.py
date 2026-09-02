@@ -100,3 +100,7 @@ def test_enter_swallows_engine_error_when_skill_level_is_unsupported(monkeypatch
     assert {"Skill Level": 5} in fake_engine.configured
     assert adapter._engine_id is not None
     assert adapter._engine_id.name == "Fake Stockfish"
+    # skill_level is part of EngineId/cache_key (finding 5): a weakened
+    # adapter's evaluations must never be indistinguishable from a
+    # full-strength one's.
+    assert adapter._engine_id.skill_level == 5

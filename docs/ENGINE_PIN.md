@@ -32,8 +32,20 @@ cache-key component, not a correctness input.
 - `go nodes N`, never `go depth` — depth timing varies with hardware, nodes does not.
 - `Threads=1` always — multi-threaded search is non-deterministic even at a fixed
   node count.
-- Cache key: `(fen4, nodes, engine name, net_hash, threads)` — see
+- Cache key: `(fen4, nodes, engine name, net_hash, threads, skill_level)` — see
   `EngineId.cache_key` in `src/tmg/engine/protocol.py`.
+
+**This determinism guarantee does not extend to `skill_level`.** Stockfish's
+"Skill Level" UCI option (used only by the difficulty-weakened play engine,
+`src/tmg/web/play_engine.py`) makes the engine choose pseudo-randomly among
+its own top candidate moves, on top of an otherwise-deterministic search --
+so a `StockfishAdapter` constructed with `skill_level` set can return a
+different move from the identical position and node budget on two separate
+runs. `skill_level` is part of `EngineId`/`cache_key` precisely so such an
+adapter's results are never conflated with, or cached under the same key
+as, a full-strength one -- but the key including it does not make the
+skill-level adapter itself reproducible. Never use one for cached
+evaluations, the report/analysis engines, or the probe baseline.
 
 ## Step 8 throughput measurement (spec M0)
 

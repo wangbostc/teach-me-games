@@ -12,14 +12,28 @@ import chess.engine
 
 @dataclass(frozen=True)
 class EngineId:
-    """Everything that changes an evaluation. Part of every cache key."""
+    """Everything that changes an evaluation. Part of every cache key.
+
+    `skill_level` is included because Stockfish's "Skill Level" UCI option
+    (StockfishAdapter's play-engine mode, see web/play_engine.py) makes the
+    same fen4/nodes/name/net_hash/threads tuple evaluate to a DIFFERENT,
+    weakened result than the same tuple at full strength -- and, per the
+    determinism caveat in stockfish.py's module docstring and
+    docs/ENGINE_PIN.md, Skill Level also makes the engine's move choice
+    pseudo-random, so it must never be reused across evaluations at all,
+    let alone cached under a key that dropped it.
+    """
 
     name: str
     net_hash: str
     threads: int
+    skill_level: int | None = None
 
     def cache_key(self, fen4_value: str, nodes: int) -> str:
-        return f"{fen4_value}|{nodes}|{self.name}|{self.net_hash}|{self.threads}"
+        return (
+            f"{fen4_value}|{nodes}|{self.name}|{self.net_hash}|{self.threads}"
+            f"|{self.skill_level}"
+        )
 
 
 @dataclass(frozen=True)
