@@ -23,6 +23,7 @@ from tmg.engine.stockfish import (
 )
 from tmg.pipeline import analyse_game
 from tmg.report.render import render_text
+from tmg.web import explain
 from tmg.web.play_engine import Difficulty, engine_kwargs_for
 from tmg.web.session import GameSession
 
@@ -68,6 +69,11 @@ def _play_bot_move() -> str:
 def new_game(req: NewGameRequest) -> dict:
     global _session, _play_engine, _learner_engine
     _close_engines()
+
+    if req.learning_mode and not explain.claude_available():
+        raise HTTPException(
+            400, "learning mode is unavailable: claude not found on PATH"
+        )
 
     difficulty = Difficulty(req.difficulty)
     user_color = chess.WHITE if req.side == "white" else chess.BLACK
@@ -118,6 +124,19 @@ def make_move(req: MoveRequest) -> dict:
         "game_over": _session.is_over,
         "result": _session.result_string(),
     }
+
+
+@app.get("/api/game/options")
+def get_options() -> dict:
+    if _session is None or not _session.learning_mode:
+        raise HTTPException(400, "learning mode is not active")
+    if _session.is_over or not _session.is_user_turn:
+        raise HTTPException(400, "not the user's turn")
+    assert _learner_engine is not None
+
+    analysis = _learner_engine.analyse(_session.board)
+    options = explain.build_options(_session.board, analysis.candidates)
+    return {"options": options}
 
 
 @app.get("/api/game/report")

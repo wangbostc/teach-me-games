@@ -146,3 +146,66 @@ def test_report_runs_the_existing_analysis_pipeline_after_game_over(client):
     resp = client.get("/api/game/report")
     assert resp.status_code == 200
     assert "summary:" in resp.json()["report_text"]
+
+
+def test_new_game_rejects_learning_mode_when_claude_is_unavailable(client, monkeypatch):
+    import tmg.web.explain as explain_module
+
+    monkeypatch.setattr(explain_module, "claude_available", lambda: False)
+    resp = client.post(
+        "/api/game", json={"side": "white", "difficulty": "easy", "learning_mode": True}
+    )
+    assert resp.status_code == 400
+    assert app_module._session is None  # no half-started game left behind
+
+
+def test_new_game_allows_learning_mode_when_claude_is_available(client, monkeypatch):
+    import tmg.web.explain as explain_module
+
+    monkeypatch.setattr(explain_module, "claude_available", lambda: True)
+    resp = client.post(
+        "/api/game", json={"side": "white", "difficulty": "easy", "learning_mode": True}
+    )
+    assert resp.status_code == 200
+
+
+def test_options_endpoint_rejected_when_not_in_learning_mode(client):
+    client.post(
+        "/api/game", json={"side": "white", "difficulty": "easy", "learning_mode": False}
+    )
+    resp = client.get("/api/game/options")
+    assert resp.status_code == 400
+
+
+def test_options_endpoint_returns_candidates_with_explanations(client, monkeypatch):
+    import tmg.web.explain as explain_module
+
+    # Force the fallback path -- this test is about wiring (the endpoint
+    # calls build_options and returns its shape), not the explanation
+    # pipeline itself, which Task 6's tests already cover in isolation.
+    monkeypatch.setattr(explain_module, "_run_claude_prompt", lambda prompt: None)
+
+    client.post(
+        "/api/game", json={"side": "white", "difficulty": "easy", "learning_mode": True}
+    )
+    resp = client.get("/api/game/options")
+    assert resp.status_code == 200
+    options = resp.json()["options"]
+    assert len(options) == 1  # _FakeEngine.analyse returns exactly one candidate
+    assert options[0]["explanation"]  # never empty -- fallback text is present
+    assert "uci" in options[0] and "move_text" in options[0] and "eval_text" in options[0]
+
+
+def test_options_endpoint_rejected_once_the_game_is_over(client, monkeypatch):
+    import tmg.web.explain as explain_module
+
+    monkeypatch.setattr(explain_module, "_run_claude_prompt", lambda prompt: None)
+    client.post(
+        "/api/game", json={"side": "white", "difficulty": "easy", "learning_mode": True}
+    )
+    session = app_module._session
+    for san in ["f3", "e5", "g4", "Qh4#"]:
+        session.apply(session.board.parse_san(san))
+
+    resp = client.get("/api/game/options")
+    assert resp.status_code == 400
