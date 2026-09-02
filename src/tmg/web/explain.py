@@ -46,6 +46,9 @@ def _build_prompt(fen: str, candidates: tuple[Candidate, ...]) -> str:
         "Rules, followed exactly:",
         "- Never state a number of any kind -- no evaluation, no "
         "centipawns, no move counts. Describe the IDEA, not a score.",
+        "- Never name a move using chess notation (piece letters plus "
+        "file and rank, e.g. \"Nf3\", \"Qxd5\"). Refer to squares and "
+        "pieces in plain language instead.",
         "- Only describe THIS position and THESE moves. Do not give "
         "general chess advice.",
         "- Output ONLY the blocks below, nothing else -- no preamble, no "
@@ -70,6 +73,8 @@ def _extract_move_tokens(text: str) -> list[str]:
 
 def _prose_is_valid(text: str, board: chess.Board) -> bool:
     for token in _extract_move_tokens(text):
+        if re.fullmatch(r"[a-h][1-8]", token):
+            continue  # a bare square names a location, not a move claim
         try:
             board.parse_san(token)
         except ValueError:

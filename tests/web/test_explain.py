@@ -55,6 +55,21 @@ def test_a_stated_number_falls_back_for_just_that_candidate(monkeypatch):
     assert "Also claims the center" in by_uci["d2d4"]["explanation"]
 
 
+def test_a_bare_square_mention_is_accepted_not_treated_as_a_move_claim(monkeypatch):
+    # "b2" is not a legal move destination from the start position (a pawn
+    # already sits there), so naively parsing every move-shaped token as a
+    # move claim would reject this prose. A bare square names a location,
+    # not a claimed move, and must not sink an otherwise-valid explanation.
+    bad = _well_formed_response().replace(
+        "Grabs the center and opens lines for the bishop and queen.",
+        "Grabs the center and eyes the long diagonal toward the b2 square.",
+    )
+    monkeypatch.setattr(explain, "_run_claude_prompt", lambda prompt: bad)
+    options = explain.build_options(chess.Board(), _candidates())
+    by_uci = {o["uci"]: o for o in options}
+    assert "eyes the long diagonal toward the b2 square" in by_uci["e2e4"]["explanation"]
+
+
 def test_an_illegal_move_named_in_the_prose_falls_back_for_just_that_candidate(monkeypatch):
     bad = _well_formed_response().replace(
         "Develops a knight toward the center without committing a pawn yet.",
