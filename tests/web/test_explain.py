@@ -89,3 +89,36 @@ def test_rejections_are_logged(monkeypatch, tmp_path):
 
     lines = log_path.read_text().strip().splitlines()
     assert len(lines) == 3  # one rejection per candidate
+
+
+def test_run_claude_prompt_handles_file_not_found_error(monkeypatch):
+    """When subprocess.run raises FileNotFoundError (claude binary deleted
+    between shutil.which check and exec), _run_claude_prompt returns None
+    rather than propagating, so build_options can fall back gracefully.
+    """
+    monkeypatch.setattr(explain.shutil, "which", lambda name: "/usr/bin/claude")
+    monkeypatch.setattr(
+        explain.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError("Binary not found"))
+    )
+    result = explain._run_claude_prompt("test prompt")
+    assert result is None
+
+
+def test_build_options_handles_log_rejection_failure(monkeypatch):
+    """When _log_rejection fails (e.g., log path parent can't be created),
+    build_options still returns valid options without raising.
+    """
+    def failing_mkdir(*args, **kwargs):
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr(explain, "_run_claude_prompt", lambda prompt: None)
+    # Monkeypatch Path.mkdir to raise OSError
+    original_mkdir = explain.Path.mkdir
+    monkeypatch.setattr(explain.Path, "mkdir", failing_mkdir)
+
+    # Should not raise; should return valid fallback options
+    options = explain.build_options(chess.Board(), _candidates())
+    assert len(options) == 3
+    assert all("no explanation available" in o["explanation"] for o in options)

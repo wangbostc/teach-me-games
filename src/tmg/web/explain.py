@@ -102,10 +102,13 @@ def _parse_response(
 
 
 def _log_rejection(uci: str, reason: str, raw: str) -> None:
-    REJECTION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    entry = {"uci": uci, "reason": reason, "raw": raw, "time": time.time()}
-    with REJECTION_LOG_PATH.open("a") as handle:
-        handle.write(json.dumps(entry) + "\n")
+    try:
+        REJECTION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"uci": uci, "reason": reason, "raw": raw, "time": time.time()}
+        with REJECTION_LOG_PATH.open("a") as handle:
+            handle.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
 
 
 def _run_claude_prompt(prompt: str) -> str | None:
@@ -118,7 +121,7 @@ def _run_claude_prompt(prompt: str) -> str | None:
             text=True,
             timeout=CLAUDE_TIMEOUT_SECONDS,
         )
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, OSError):
         return None
     if result.returncode != 0:
         return None
