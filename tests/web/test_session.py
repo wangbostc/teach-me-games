@@ -48,3 +48,23 @@ def test_to_pgn_game_replays_the_exact_moves_played():
         session.apply(session.board.parse_san(san))
     game = session.to_pgn_game()
     assert list(game.mainline_moves()) == session.moves
+
+
+def test_to_pgn_game_sets_headers_for_a_white_user_session():
+    session = _new_session(user_color=chess.WHITE)
+    for san in ["f3", "e5", "g4", "Qh4#"]:
+        session.apply(session.board.parse_san(san))
+    headers = session.to_pgn_game().headers
+    assert headers["White"] == "You"
+    assert headers["Black"] == "Stockfish"
+    assert headers["Result"] == "0-1"
+
+
+def test_to_pgn_game_sets_headers_for_a_black_user_session():
+    session = _new_session(user_color=chess.BLACK)
+    for san in ["f3", "e5", "g4", "Qh4#"]:
+        session.apply(session.board.parse_san(san))
+    headers = session.to_pgn_game().headers
+    assert headers["White"] == "Stockfish"
+    assert headers["Black"] == "You"
+    assert headers["Result"] == "0-1"

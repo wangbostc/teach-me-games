@@ -48,4 +48,9 @@ class GameSession:
         node = game
         for move in self.moves:
             node = node.add_main_variation(move)
+
+        game.headers["White"] = "You" if self.user_color == chess.WHITE else "Stockfish"
+        game.headers["Black"] = "Stockfish" if self.user_color == chess.WHITE else "You"
+        if self.is_over:
+            game.headers["Result"] = self.result_string()
         return game
