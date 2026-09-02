@@ -41,28 +41,51 @@ function maybeFetchReport(gameOver) {
   });
 }
 
+// Bumped on every renderOptions() call so a late-arriving /explanations
+// response from a PREVIOUS turn (the user already moved, or a new game
+// started, while it was still in flight) can recognize itself as stale and
+// skip touching a DOM that's since moved on to a different turn's options.
+let optionsRequestId = 0;
+
 function renderOptions() {
+  const requestId = ++optionsRequestId;
+  // The struct (move + eval) comes back instantly -- no LLM involved
+  // (docs/PLAN.md section 7) -- and is rendered on its own first. The
+  // explanatory prose is fetched separately right after and can take
+  // several seconds (it's validated server-side before it's ever sent
+  // here), so it must never hold up the struct the learner is waiting on.
   apiGet("/api/game/options").then(({ ok, data }) => {
-    if (!ok) return;
+    if (!ok || requestId !== optionsRequestId) return;
     const container = document.getElementById("options");
     container.hidden = false;
     container.innerHTML = "";
+    const explanationNodes = {};
     data.options.forEach((option) => {
       const div = document.createElement("div");
       div.className = "option";
-      // option.move_text and option.eval_text are our own rendered text,
-      // but option.explanation is claude-generated prose -- the one place
-      // in this app where model output reaches the DOM. Insert all three
-      // as text nodes (never innerHTML) so nothing it contains is ever
-      // parsed as markup.
+      // option.move_text and option.eval_text are our own rendered text.
+      // The explanation text node (filled in below, once it arrives) will
+      // hold claude-generated prose -- the one place in this app where
+      // model output reaches the DOM. Insert everything as text nodes
+      // (never innerHTML) so nothing it contains is ever parsed as markup.
       const strong = document.createElement("strong");
       strong.textContent = option.move_text;
       div.appendChild(strong);
       div.appendChild(document.createTextNode(" (" + option.eval_text + ")"));
       div.appendChild(document.createElement("br"));
-      div.appendChild(document.createTextNode(option.explanation));
+      const explanationNode = document.createTextNode("Loading explanation...");
+      div.appendChild(explanationNode);
       div.addEventListener("click", () => playMove(option.uci));
       container.appendChild(div);
+      explanationNodes[option.uci] = explanationNode;
+    });
+
+    apiGet("/api/game/options/explanations").then(({ ok: explainOk, data: explainData }) => {
+      if (requestId !== optionsRequestId) return;
+      Object.keys(explanationNodes).forEach((uci) => {
+        const text = explainOk && explainData.explanations[uci];
+        explanationNodes[uci].textContent = text || "(explanation unavailable)";
+      });
     });
   });
 }

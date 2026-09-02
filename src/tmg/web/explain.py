@@ -2,10 +2,17 @@
 
 The engine computes the candidates; the model is only ever asked to narrate
 them (docs/PLAN.md section 0). Nothing the model writes reaches the learner
-unvalidated: every move-shaped token in its prose must re-parse as legal in
-the exact position it was generated for, and it is never trusted to state
-an evaluation number -- that comes from the Candidate struct, rendered by
-our own code, matching the eval convention tmg.report.render already uses.
+unvalidated: it is never trusted to name a move using chess notation --
+legal or not, only a bare square (naming a location, not a move) is ever
+allowed through -- and it is never trusted to state an evaluation number
+either; that comes from the Candidate struct, rendered by our own code via
+tmg.report.render.eval_text, the exact function the post-game report uses.
+
+Per docs/PLAN.md section 7's fast/slow path split, this module exposes two
+entry points rather than one: `build_struct_options` renders instantly from
+the engine struct alone (no LLM), and `build_explanations` does the slow,
+validated `claude -p` call. app.py's two endpoints call them separately so
+a slow or unavailable explanation never blocks the instant part.
 """
 from __future__ import annotations
 
@@ -19,7 +26,7 @@ from pathlib import Path
 import chess
 
 from tmg.engine.protocol import Candidate
-from tmg.report.render import describe_uci
+from tmg.report.render import describe_uci, eval_text
 
 CLAUDE_TIMEOUT_SECONDS = 60.0
 REJECTION_LOG_PATH = Path.home() / ".tmg" / "explain_rejections.jsonl"
@@ -29,6 +36,7 @@ _MOVE_TOKEN_RE = re.compile(
 )
 _DIGIT_RE = re.compile(r"\d")
 _BLOCK_RE = re.compile(r'<move uci="([^"]*)">(.*?)</move>', re.DOTALL)
+_BARE_SQUARE_RE = re.compile(r"[a-h][1-8]")
 
 
 def claude_available() -> bool:
@@ -71,21 +79,25 @@ def _extract_move_tokens(text: str) -> list[str]:
     return _MOVE_TOKEN_RE.findall(text)
 
 
-def _prose_is_valid(text: str, board: chess.Board) -> bool:
+def _prose_is_valid(text: str) -> bool:
+    """A bare square (e.g. "e4") names a location, not a move claim, and is
+    always allowed through (commit 375e90d). Every OTHER move-shaped token
+    is a notation claim and is rejected outright -- whether or not it
+    happens to also parse as legal SAN in this position. Learning Mode must
+    never display chess notation to the learner (docs/PLAN.md's no-SAN
+    convention, commit c0f50a7); an illegal one obviously stays rejected
+    too, so there is nothing left to gain by re-parsing move-shaped tokens
+    against the board at all.
+    """
     for token in _extract_move_tokens(text):
-        if re.fullmatch(r"[a-h][1-8]", token):
+        if _BARE_SQUARE_RE.fullmatch(token):
             continue  # a bare square names a location, not a move claim
-        try:
-            board.parse_san(token)
-        except ValueError:
-            return False
+        return False
     remainder = _MOVE_TOKEN_RE.sub("", text)
     return not _DIGIT_RE.search(remainder)
 
 
-def _parse_response(
-    raw: str, board: chess.Board, candidate_ucis: list[str]
-) -> dict[str, str | None]:
+def _parse_response(raw: str, candidate_ucis: list[str]) -> dict[str, str | None]:
     """Map each candidate UCI to its validated explanation, or None if it
     must fall back. A response whose overall SHAPE doesn't match (wrong
     number of blocks, or a different set of UCIs than asked for) is a full
@@ -102,14 +114,23 @@ def _parse_response(
     result: dict[str, str | None] = {}
     for uci, text in blocks:
         text = text.strip()
-        result[uci] = text if _prose_is_valid(text, board) else None
+        result[uci] = text if _prose_is_valid(text) else None
     return result
 
 
-def _log_rejection(uci: str, reason: str, raw: str) -> None:
+def _log_rejection(reason: str, raw: str, verdicts: dict[str, bool]) -> None:
+    """`verdicts` maps each candidate's UCI to whether its explanation was
+    accepted (True) or fell back (False). Logged ONCE per `claude -p` call,
+    not once per rejected candidate -- a single shape-level failure rejects
+    every candidate at once, and logging the identical raw response once
+    per candidate would inflate the rejection log N-fold for one real
+    failure. The line count is this project's live quality metric
+    (docs/PLAN.md section 0), so that count must mean "one rejected call",
+    not "one rejected candidate".
+    """
     try:
         REJECTION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        entry = {"uci": uci, "reason": reason, "raw": raw, "time": time.time()}
+        entry = {"reason": reason, "raw": raw, "verdicts": verdicts, "time": time.time()}
         with REJECTION_LOG_PATH.open("a") as handle:
             handle.write(json.dumps(entry) + "\n")
     except OSError:
@@ -133,21 +154,37 @@ def _run_claude_prompt(prompt: str) -> str | None:
     return result.stdout
 
 
-def _eval_text(candidate: Candidate) -> str:
-    if candidate.mate is not None:
-        pov = "good for you" if candidate.mate > 0 else "bad for you"
-        return f"mate in {abs(candidate.mate)}, {pov}"
-    cp = candidate.cp or 0
-    pov = "good for you" if cp > 0 else "bad for you" if cp < 0 else "even"
-    return f"{cp / 100:+.2f}, {pov}"
-
-
-def build_options(
+def build_struct_options(
     board: chess.Board, candidates: tuple[Candidate, ...]
 ) -> list[dict[str, str]]:
-    """The full Learning Mode pipeline for one turn: prompt, call,
-    validate, fall back. Never raises -- a broken explanation degrades to a
-    struct-only description, it never blocks the turn.
+    """The instant half of a Learning Mode turn (docs/PLAN.md section 7's
+    fast path): move text and evaluation, both rendered purely from the
+    Candidate struct our own code produced -- no LLM call, nothing to
+    validate, nothing that can take more than a few milliseconds. Safe to
+    call on every turn; `build_explanations` is the slow half.
+    """
+    options = []
+    for candidate in candidates:
+        move = chess.Move.from_uci(candidate.move)
+        move_text = describe_uci(candidate.move, is_castling=board.is_castling(move))
+        options.append(
+            {
+                "uci": candidate.move,
+                "move_text": move_text,
+                "eval_text": eval_text(candidate.cp, candidate.mate),
+            }
+        )
+    return options
+
+
+def build_explanations(
+    board: chess.Board, candidates: tuple[Candidate, ...]
+) -> dict[str, str]:
+    """The buffered, validated half of a Learning Mode turn: prompt, call,
+    validate, fall back -- keyed by UCI so the caller can merge the result
+    onto `build_struct_options`'s output once it resolves, which can take
+    up to CLAUDE_TIMEOUT_SECONDS. Never raises -- a broken explanation
+    degrades to a struct-only description, it never blocks the turn.
     """
     ucis = [c.move for c in candidates]
     raw = _run_claude_prompt(_build_prompt(board.fen(), candidates))
@@ -155,24 +192,21 @@ def build_options(
         explanations: dict[str, str | None] = {uci: None for uci in ucis}
         fail_reason = "claude_call_unavailable_or_failed"
     else:
-        explanations = _parse_response(raw, board, ucis)
+        explanations = _parse_response(raw, ucis)
         fail_reason = "validation_failed"
 
-    options = []
+    verdicts: dict[str, bool] = {}
+    result: dict[str, str] = {}
     for candidate in candidates:
-        move = chess.Move.from_uci(candidate.move)
-        move_text = describe_uci(candidate.move, is_castling=board.is_castling(move))
-
         explanation = explanations.get(candidate.move)
-        if explanation is None:
-            _log_rejection(candidate.move, fail_reason, raw or "")
+        accepted = explanation is not None
+        verdicts[candidate.move] = accepted
+        if not accepted:
+            move = chess.Move.from_uci(candidate.move)
+            move_text = describe_uci(candidate.move, is_castling=board.is_castling(move))
             explanation = f"({move_text} -- no explanation available)"
-        options.append(
-            {
-                "uci": candidate.move,
-                "move_text": move_text,
-                "eval_text": _eval_text(candidate),
-                "explanation": explanation,
-            }
-        )
-    return options
+        result[candidate.move] = explanation
+
+    if not all(verdicts.values()):
+        _log_rejection(fail_reason, raw or "", verdicts)
+    return result

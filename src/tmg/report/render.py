@@ -77,11 +77,15 @@ def _describe_move(move: MoveReport, show_san: bool) -> str:
     return describe_uci(move.uci, is_castling=move.san.startswith("O-O"))
 
 
-def _eval_text(cp: int | None, mate: int | None) -> str:
+def eval_text(cp: int | None, mate: int | None) -> str:
     """Format an evaluation. Both cp and mate are already mover-POV (see
     MoveReport), so "good for you" / "bad for you" always describes whoever
     just played the move being described -- the same convention the principle
     violation messages already use ("Your rook on e5 can be captured.").
+
+    Public (not `_eval_text`) so `tmg.web.explain` can reuse it verbatim
+    instead of keeping a second copy that could silently drift from this
+    one -- see that module's own eval-rendering call site.
     """
     if mate is not None:
         pov = "good for you" if mate > 0 else "bad for you"
@@ -114,12 +118,12 @@ def render_text(report: GameReport, show_san: bool = False) -> str:
     for move in report.moves:
         # The report interleaves both players move by move, so naming the
         # mover explicitly in the header is load-bearing, not decorative:
-        # without it "good for you" / "bad for you" (see _eval_text) and
+        # without it "good for you" / "bad for you" (see eval_text) and
         # "Your <piece>" (see principles.py) silently change whose "you" is
         # meant from one line to the next.
         mover_label = "White" if move.color == "white" else "Black"
         described = _describe_move(move, show_san)
-        evaluation = _eval_text(move.cur_cp, move.cur_mate)
+        evaluation = eval_text(move.cur_cp, move.cur_mate)
 
         if move.judgement is None and not move.violations:
             continue
