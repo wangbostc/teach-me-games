@@ -103,6 +103,12 @@ function startGame() {
       draggable: !learningMode,
       orientation: userColor,
       onDrop: onDrop,
+      // The npm/unpkg tarball for chessboardjs 1.0.0 does not ship the
+      // piece PNGs (only css/js) -- pieceTheme's default relative path
+      // ("img/chesspieces/wikipedia/{piece}.png") 404s against our own
+      // FastAPI origin, leaving the board pieceless. Point it at the
+      // project's own site, which does host them.
+      pieceTheme: "https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png",
     });
 
     if (learningMode) {
