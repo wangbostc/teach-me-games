@@ -8,7 +8,7 @@ logic (grading/, facts/) and the one module that owns a subprocess
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import chess
 import chess.pgn
@@ -22,7 +22,6 @@ class GameSession:
     user_color: chess.Color
     difficulty: Difficulty
     learning_mode: bool
-    moves: list[chess.Move] = field(default_factory=list)
 
     @property
     def is_user_turn(self) -> bool:
@@ -34,7 +33,6 @@ class GameSession:
 
     def apply(self, move: chess.Move) -> None:
         self.board.push(move)
-        self.moves.append(move)
 
     def result_string(self) -> str | None:
         return self.board.result() if self.is_over else None
@@ -43,10 +41,20 @@ class GameSession:
         """Rebuild a chess.pgn.Game from the moves played, for
         analyse_game -- the same input shape tmg's CLI reads from a PGN
         file, just built in memory instead of parsed from disk.
+
+        `board.move_stack` is the single source of truth for the moves
+        played (no separate `moves` list to keep in sync -- see finding
+        11), and `board.root()` is the position they were played from.
+        `game.setup()` records that starting position via the standard
+        SetUp/FEN headers whenever it isn't the normal start -- `board` is
+        a constructor argument, so nothing here may assume it always is.
+        Without this, a game built from a non-standard start would be
+        replayed by analyse_game from the wrong position with no error.
         """
         game = chess.pgn.Game()
+        game.setup(self.board.root())
         node = game
-        for move in self.moves:
+        for move in self.board.move_stack:
             node = node.add_main_variation(move)
 
         game.headers["White"] = "You" if self.user_color == chess.WHITE else "Stockfish"
