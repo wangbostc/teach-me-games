@@ -184,6 +184,7 @@ def test_options_endpoint_returns_candidates_with_explanations(client, monkeypat
     # calls build_options and returns its shape), not the explanation
     # pipeline itself, which Task 6's tests already cover in isolation.
     monkeypatch.setattr(explain_module, "_run_claude_prompt", lambda prompt: None)
+    monkeypatch.setattr(explain_module, "claude_available", lambda: True)
 
     client.post(
         "/api/game", json={"side": "white", "difficulty": "easy", "learning_mode": True}
@@ -200,6 +201,7 @@ def test_options_endpoint_rejected_once_the_game_is_over(client, monkeypatch):
     import tmg.web.explain as explain_module
 
     monkeypatch.setattr(explain_module, "_run_claude_prompt", lambda prompt: None)
+    monkeypatch.setattr(explain_module, "claude_available", lambda: True)
     client.post(
         "/api/game", json={"side": "white", "difficulty": "easy", "learning_mode": True}
     )
