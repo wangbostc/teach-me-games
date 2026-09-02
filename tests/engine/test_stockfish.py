@@ -53,3 +53,10 @@ def test_a_fixed_node_budget_is_reproducible_across_processes():
     # (docs/PLAN.md section 13). If this ever fails, the cache key is wrong, not
     # this test.
     assert _candidates_from_a_fresh_process() == _candidates_from_a_fresh_process()
+
+
+@requires_engine
+def test_skill_level_is_accepted_by_a_real_stockfish_binary():
+    with StockfishAdapter(nodes=10_000, skill_level=3) as engine:
+        analysis = engine.analyse(chess.Board())
+    assert analysis.best is not None

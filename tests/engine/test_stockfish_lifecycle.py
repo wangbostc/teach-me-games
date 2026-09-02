@@ -41,6 +41,25 @@ class _FakeEngineThatDiesOnQuit:
         raise chess.engine.EngineTerminatedError("process already gone")
 
 
+class _FakeEngineThatRejectsSkillLevel:
+    """Accepts Threads, but the build/version doesn't support Skill Level --
+    configure() raises EngineError for it, exactly as python-chess does for
+    any UCI option name absent from the engine's advertised options."""
+
+    def __init__(self) -> None:
+        self.configured: list[dict] = []
+        self.id = {"name": "Fake Stockfish"}
+        self.options: dict = {}
+
+    def configure(self, options: dict) -> None:
+        self.configured.append(options)
+        if "Skill Level" in options:
+            raise chess.engine.EngineError("unsupported option: Skill Level")
+
+    def quit(self) -> None:
+        pass
+
+
 def test_enter_cleans_up_the_spawned_process_when_configure_fails(monkeypatch):
     fake_engine = _FakeEngineThatFailsToConfigure()
     monkeypatch.setattr(
@@ -64,3 +83,20 @@ def test_exit_does_not_raise_if_the_engine_is_already_dead():
     adapter.__exit__(None, None, None)  # must not raise, even though quit() does
 
     assert adapter._engine is None
+
+
+def test_enter_swallows_engine_error_when_skill_level_is_unsupported(monkeypatch):
+    fake_engine = _FakeEngineThatRejectsSkillLevel()
+    monkeypatch.setattr(
+        chess.engine.SimpleEngine,
+        "popen_uci",
+        staticmethod(lambda *args, **kwargs: fake_engine),
+    )
+    adapter = StockfishAdapter(skill_level=5)
+
+    result = adapter.__enter__()
+
+    assert result is adapter
+    assert {"Skill Level": 5} in fake_engine.configured
+    assert adapter._engine_id is not None
+    assert adapter._engine_id.name == "Fake Stockfish"

@@ -33,11 +33,13 @@ class StockfishAdapter:
         nodes: int = DEFAULT_NODES,
         threads: int = 1,
         multipv: int = DEFAULT_MULTIPV,
+        skill_level: int | None = None,
     ) -> None:
         self._path = path
         self._nodes = nodes
         self._threads = threads
         self._multipv = multipv
+        self._skill_level = skill_level
         self._engine: chess.engine.SimpleEngine | None = None
         self._engine_id: EngineId | None = None
 
@@ -45,6 +47,15 @@ class StockfishAdapter:
         self._engine = chess.engine.SimpleEngine.popen_uci(self._path, setpgrp=True)
         try:
             self._engine.configure({"Threads": self._threads})
+            if self._skill_level is not None:
+                try:
+                    self._engine.configure({"Skill Level": self._skill_level})
+                except chess.engine.EngineError:
+                    # Not every build/version exposes Skill Level (mirrors the
+                    # EvalFile guard below). Weakening the engine is a
+                    # play-mode nicety, not a correctness input -- a missing
+                    # option must not crash startup.
+                    pass
             try:
                 net_hash = str(self._engine.options["EvalFile"].default)
             except KeyError:
