@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>tmg -- play</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css"
+  />
+  <style>
+    body { font-family: monospace; max-width: 760px; margin: 2rem auto; }
+    #board { width: 480px; }
+    #options .option { border: 1px solid #999; padding: 0.75rem; margin-bottom: 0.5rem; cursor: pointer; }
+    #options .option:hover { background: #f0f0f0; }
+    #report { white-space: pre-wrap; border-top: 1px solid #999; margin-top: 1.5rem; padding-top: 1rem; }
+    [hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <h1>tmg -- play</h1>
+
+  <section id="setup">
+    <label>Side:
+      <select id="side">
+        <option value="white">White</option>
+        <option value="black">Black</option>
+      </select>
+    </label>
+    <label>Difficulty:
+      <select id="difficulty">
+        <option value="easy">Easy</option>
+        <option value="medium">Medium</option>
+        <option value="hard">Hard</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="learning-mode" /> Learning mode</label>
+    <button id="start">Start game</button>
+  </section>
+
+  <section id="game" hidden>
+    <div id="board"></div>
+    <div id="options" hidden></div>
+    <div id="status"></div>
+  </section>
+
+  <section id="report" hidden></section>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
