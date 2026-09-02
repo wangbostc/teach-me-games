@@ -120,6 +120,20 @@ def make_move(req: MoveRequest) -> dict:
     }
 
 
+@app.get("/api/game/report")
+def get_report() -> dict:
+    if _session is None or not _session.is_over:
+        raise HTTPException(400, "game not finished")
+
+    game = _session.to_pgn_game()
+    if _learner_engine is not None:
+        report = analyse_game(game, _learner_engine)
+    else:
+        with StockfishAdapter(nodes=DEFAULT_NODES, multipv=DEFAULT_MULTIPV) as engine:
+            report = analyse_game(game, engine)
+    return {"report_text": render_text(report)}
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")

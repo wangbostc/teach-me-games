@@ -124,3 +124,25 @@ def test_run_starts_uvicorn_and_opens_the_browser_when_stockfish_is_available(mo
 
     assert calls["opened"] == "http://127.0.0.1:9000"
     assert calls["run"] == ("127.0.0.1", 9000)
+
+
+def test_report_is_rejected_before_game_over(client):
+    client.post(
+        "/api/game", json={"side": "white", "difficulty": "easy", "learning_mode": False}
+    )
+    resp = client.get("/api/game/report")
+    assert resp.status_code == 400
+
+
+def test_report_runs_the_existing_analysis_pipeline_after_game_over(client):
+    client.post(
+        "/api/game", json={"side": "white", "difficulty": "easy", "learning_mode": False}
+    )
+    session = app_module._session
+    for san in ["f3", "e5", "g4", "Qh4#"]:
+        session.apply(session.board.parse_san(san))
+    assert session.is_over
+
+    resp = client.get("/api/game/report")
+    assert resp.status_code == 200
+    assert "summary:" in resp.json()["report_text"]
