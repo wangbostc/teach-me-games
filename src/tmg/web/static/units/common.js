@@ -396,24 +396,44 @@ export function humanoid({
   const shoulderY = torsoTop - 0.02;
   const headY = torsoTop + 0.06 + headR;
 
+  // A rounded boot: a low capsule reads as footwear where a box reads as a
+  // brick strapped to the ankle.
+  const addBoot = (x, y, z, ry = 0) => {
+    const b = add(g, new THREE.CapsuleGeometry(0.038 * w, 0.075, 4, 10), bootMat, x, y, z, Math.PI / 2, ry, 0);
+    b.scale.set(1.15, 1, 0.8);
+  };
+  // Limb segments are capsules, so shoulders, knees and elbows are rounded
+  // and a joint sphere is only needed where a real joint bends.
+  const limb = (r1, r2, len, x, y, z, rx = 0, ry = 0, rz = 0) => {
+    const seg = add(g, new THREE.CapsuleGeometry(Math.max(r1, r2), Math.max(0.02, len - Math.max(r1, r2) * 2), 4, 10), body, x, y, z, rx, ry, rz);
+    return seg;
+  };
+
   if (legs === "straight") {
+    // Thigh, knee, shin: a leg that could bend, even standing straight.
     pair((s) => {
-      add(g, new THREE.CylinderGeometry(0.05 * w, 0.06 * w, legLen, 10), body, s * 0.075 * w, legLen / 2, 0);
-      add(g, new THREE.BoxGeometry(0.09 * w, 0.06, 0.14), bootMat, s * 0.075 * w, 0.03, -0.02);
+      const x = s * 0.078 * w;
+      limb(0.052 * w, 0.052 * w, legLen * 0.52, x, legLen * 0.74, 0.005);
+      add(g, new THREE.SphereGeometry(0.048 * w, 10, 8), body, x, legLen * 0.48, 0.005);
+      limb(0.044 * w, 0.044 * w, legLen * 0.5, x, legLen * 0.25, 0);
+      addBoot(x, 0.035, -0.025);
     });
   } else if (legs === "digitigrade") {
     // Thigh forward, shin back, foot forward again -- a beast's crouch.
     pair((s) => {
-      add(g, new THREE.CylinderGeometry(0.05 * w, 0.058 * w, legLen * 0.55, 10), body, s * 0.085 * w, legLen * 0.72, 0.05, 0.5, 0, 0);
-      add(g, new THREE.CylinderGeometry(0.038 * w, 0.048 * w, legLen * 0.6, 10), body, s * 0.085 * w, legLen * 0.34, -0.04, -0.55, 0, 0);
-      add(g, new THREE.BoxGeometry(0.085 * w, 0.05, 0.16), bootMat, s * 0.085 * w, 0.025, -0.05);
+      const x = s * 0.085 * w;
+      limb(0.054 * w, 0.054 * w, legLen * 0.55, x, legLen * 0.72, 0.05, 0.5);
+      add(g, new THREE.SphereGeometry(0.046 * w, 10, 8), body, x, legLen * 0.47, 0.11);
+      limb(0.042 * w, 0.042 * w, legLen * 0.6, x, legLen * 0.32, 0.0, -0.55);
+      addBoot(x, 0.03, -0.06);
     });
   } else if (legs === "mounted") {
     // Thigh out across the mount's flank, shin dropping to a stirrup.
     pair((s) => {
-      add(g, new THREE.CylinderGeometry(0.05 * w, 0.056 * w, 0.22, 8), body, s * 0.14 * w, hip - 0.02, -0.04, -0.25, 0, s * 1.15);
-      add(g, new THREE.CylinderGeometry(0.042 * w, 0.05 * w, 0.24, 8), body, s * 0.24 * w, hip - 0.16, -0.02, 0, 0, s * 0.12);
-      add(g, new THREE.BoxGeometry(0.085 * w, 0.055, 0.15), bootMat, s * 0.25 * w, hip - 0.3, -0.04);
+      limb(0.052 * w, 0.052 * w, 0.22, s * 0.14 * w, hip - 0.02, -0.04, -0.25, 0, s * 1.15);
+      add(g, new THREE.SphereGeometry(0.046 * w, 10, 8), body, s * 0.235 * w, hip - 0.06, -0.05);
+      limb(0.044 * w, 0.044 * w, 0.24, s * 0.24 * w, hip - 0.16, -0.02, 0, 0, s * 0.12);
+      addBoot(s * 0.25 * w, hip - 0.3, -0.045);
     });
   } else if (legs === "none") {
     add(g, new THREE.ConeGeometry(0.19 * w, legLen + 0.12, 14, 1, true), cloth || body, 0, beltY - (legLen + 0.12) / 2 + 0.02, 0);
@@ -421,19 +441,42 @@ export function humanoid({
   // legs === "bare" adds nothing: the caller is grafting this torso onto a
   // horse's shoulders, a serpent's coil, or a column of smoke.
 
-  // Pelvis, torso, and the cloth over it.
-  add(g, new THREE.CylinderGeometry(0.13 * w, 0.15 * w, 0.1, 14), cloth || body, 0, beltY, 0);
-  const torso = add(g, new THREE.BoxGeometry(0.27 * w, torsoLen, 0.17 * w), body, 0, beltY + torsoLen / 2, 0, hunch, 0, 0);
-  void torso;
+  // Torso: a lathe-turned trunk -- broad at the chest, drawn in at the waist,
+  // flaring again at the hips -- squashed front-to-back so it is deeper than
+  // it is wide in neither direction. One shape, no seams; a box torso is the
+  // single thing that most made these figures read as toys.
+  const trunkH = torsoLen + 0.1;
+  const trunkProfile = [
+    [0.1, 0],
+    [0.14, 0.06],
+    [0.125, 0.3],
+    [0.135, 0.62],
+    [0.15, 0.86],
+    [0.135, 1.0],
+    [0.06, 1.0],
+  ].map(([r, t]) => new THREE.Vector2(r * w, hip + t * trunkH));
+  const trunk = add(g, new THREE.LatheGeometry(trunkProfile, 20), body, 0, 0, 0, hunch, 0, 0);
+  trunk.scale.z = 0.72;
   if (cloth) {
-    add(g, new THREE.BoxGeometry(0.17 * w, torsoLen + 0.04, 0.02), cloth, 0, beltY + torsoLen / 2 - 0.06, -0.095 * w, hunch, 0, 0);
-    add(g, new THREE.BoxGeometry(0.17 * w, torsoLen + 0.04, 0.02), cloth, 0, beltY + torsoLen / 2 - 0.06, 0.095 * w, hunch, 0, 0);
+    // The surcoat wraps the trunk as a slightly larger open lathe, split at
+    // the sides by leaving the shape's silhouette a touch wider front and
+    // back -- a thin panel floating over each face reads as a sandwich board.
+    const coatProfile = [
+      [0.12, -0.1],
+      [0.15, 0.06],
+      [0.135, 0.3],
+      [0.142, 0.62],
+      [0.152, 0.84],
+    ].map(([r, t]) => new THREE.Vector2(r * w + 0.012, hip + t * trunkH));
+    const coat = add(g, new THREE.LatheGeometry(coatProfile, 20), cloth, 0, 0, 0, hunch, 0, 0);
+    coat.scale.z = 0.76;
     // The device on the surcoat. Defaults to a plain vertical pale: a cross
     // is Castle's own heraldry and must be asked for, not inherited by every
     // army that happens to wear a tabard.
     if (emblem) {
       const ey = beltY + torsoLen / 2;
-      const ez = -0.107 * w;
+      // Just proud of the coat's front face (coat radius * its z-squash).
+      const ez = -(0.142 * w + 0.012) * 0.76 - 0.008;
       if (emblemShape === "cross") {
         add(g, new THREE.BoxGeometry(0.05, 0.22, 0.02), emblem, 0, ey - 0.02, ez);
         add(g, new THREE.BoxGeometry(0.13, 0.05, 0.02), emblem, 0, ey + 0.03, ez);
@@ -446,16 +489,26 @@ export function humanoid({
       }
     }
   }
-  if (accent) add(g, new THREE.CylinderGeometry(0.145 * w, 0.145 * w, 0.03, 14), accent, 0, beltY + 0.05, 0);
+  if (accent) {
+    const belt = add(g, new THREE.TorusGeometry(0.135 * w, 0.016, 8, 24), accent, 0, beltY + 0.05, 0, Math.PI / 2, 0, 0);
+    belt.scale.z = 0.76;
+  }
 
-  // Arms. A second (lower) pair for many-armed units.
+  // Arms: pauldron, upper arm, elbow, forearm, hand -- hanging with a slight
+  // outward angle so they read as arms rather than posts bolted to the sides.
+  // A second (lower) pair for many-armed units.
   const armSets = arms >= 4 ? [shoulderY, shoulderY - 0.16] : [shoulderY];
   armSets.forEach((sy, idx) => {
     const scale = idx === 0 ? 1 : 0.85;
     pair((s) => {
-      add(g, new THREE.SphereGeometry(0.08 * w * scale, 10, 8), body, s * 0.165 * w, sy + 0.05, 0);
-      add(g, new THREE.CylinderGeometry(0.045 * scale, 0.04 * scale, 0.32 * scale, 8), body, s * 0.19 * w, sy - 0.13, 0);
-      add(g, new THREE.SphereGeometry(0.045 * scale, 8, 6), faceMat, s * 0.19 * w, sy - 0.3 * scale, 0);
+      const x = s * 0.165 * w;
+      const pad = add(g, new THREE.SphereGeometry(0.078 * w * scale, 12, 10), body, x, sy + 0.05, 0);
+      pad.scale.set(1, 0.85, 0.9);
+      limb(0.042 * scale, 0.042 * scale, 0.17 * scale, x + s * 0.02, sy - 0.05, 0, 0, 0, s * 0.12);
+      add(g, new THREE.SphereGeometry(0.04 * scale, 10, 8), body, x + s * 0.03, sy - 0.14, -0.005);
+      limb(0.036 * scale, 0.036 * scale, 0.16 * scale, x + s * 0.035, sy - 0.22, -0.015, -0.12, 0, s * 0.04);
+      const hand = add(g, new THREE.SphereGeometry(0.042 * scale, 10, 8), faceMat, x + s * 0.035, sy - 0.3 * scale, -0.025);
+      hand.scale.set(0.85, 1, 1.15);
     });
   });
 
