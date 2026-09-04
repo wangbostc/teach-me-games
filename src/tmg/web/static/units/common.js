@@ -203,6 +203,8 @@ export function tail(g, mat, { y, z, len = 0.34, r = 0.05, links = 4, droop = 0.
   if (tipLen > 0) {
     add(g, new THREE.ConeGeometry(r * 0.6, tipLen, 8), tipMat || mat, 0, py, pz, -1.1, 0, 0);
   }
+  // Where the tail ends, for callers that want to cap it themselves.
+  return { x: 0, y: py, z: pz };
 }
 
 // A rising column of smoke or flame standing in for legs: a flared base
@@ -829,9 +831,10 @@ export function dragon({
   });
 
   // Tail sweeping back and down from the hips -- the third point of balance.
-  tail(g, body, { y: hipY + 0.02, z: bodyR * 0.7, len: tailLen, r: bodyR * 0.46, links: 4, droop: 0.55 });
+  const tailTip = tail(g, body, { y: hipY + 0.02, z: bodyR * 0.7, len: tailLen, r: bodyR * 0.46, links: 4, droop: 0.55 });
 
-  return { group: g, height: topY, shoulderY };
+  // bodyY is kept for callers written against the old horizontal dragon.
+  return { group: g, height: topY, shoulderY, bodyY: torsoCY, tailTip };
 }
 
 // ---------------------------------------------------------------------------

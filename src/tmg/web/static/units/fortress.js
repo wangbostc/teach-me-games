@@ -5,6 +5,7 @@
 import * as THREE from "three";
 import {
   add,
+  glowEyes,
   humanoid,
   quadruped,
   dragon,
@@ -18,20 +19,21 @@ import {
   hide,
   matte,
   glow,
-  polishedMetal,
+  paintedMetal,
   wood,
 } from "/static/units/materials.js";
 
 const PALETTE = {
   cyanTeal: 0x1f6b85,
   swampGreen: 0x4a6b3f,
-  mudBrown: 0x6b5a3f,
   bone: 0xcfc6a8,
   olive: 0x8a9b5c,
   scaleGreen: 0x3f7a5a,
   gnollFur: 0x9c7a4a,
   venomGreen: 0x9fd14b,
   darkHide: 0x3a3428,
+  gorgonOlive: 0x5c6b48,
+  plateDark: 0x2b3324,
 };
 
 export const BASE_COLOR = 0x3a4a3a;
@@ -44,14 +46,14 @@ function makeMats() {
   return {
     fur: hide(PALETTE.gnollFur),
     scale: hide(PALETTE.scaleGreen),
-    mud: hide(PALETTE.mudBrown),
     swamp: hide(PALETTE.swampGreen),
     teal: hide(PALETTE.cyanTeal),
     dark: hide(PALETTE.darkHide),
     bone: matte(PALETTE.bone, 0.55),
-    verdigris: polishedMetal(PALETTE.olive, { roughness: 0.6, clearcoat: 0.25 }),
     venom: glow(PALETTE.venomGreen, PALETTE.venomGreen, 1.1),
     wood: wood(0x5a4530, 0x2c2216, { repeat: 2, roughness: 0.7 }),
+    gorgonHide: hide(PALETTE.gorgonOlive),
+    plate: paintedMetal(PALETTE.plateDark),
   };
 }
 
@@ -132,28 +134,74 @@ function lizardman(m) {
   return built;
 }
 
-// r -- a heavy, armored bull-headed beast. Broad and squat: the immovable
-// piece. Glowing venom eyes are its weapon; verdigris plates down the spine
-// stand in for armor. quadruped()'s "bull" head already curls a pair of
-// horns from the accent material, so no extra hornPair is added on top of
-// it (that would draw a second, overlapping pair at nearly the same spot).
+// r -- a heavy, armored bull-like beast: broad, squat, plated -- the
+// immovable piece. Overlapping spine plates and a collar hump are what read
+// as "armored" rather than a smooth lump; glowing venom eyes are its weapon.
+// quadruped()'s "bull" head already curls a small pair of horns from the
+// accent (bone) material -- passing `horns` here adds a second, much bigger
+// straight pair (also bone), rather than duplicating the curl pair.
 function gorgon(m) {
-  return quadruped({
-    body: m.mud,
+  const bodyLen = 0.44;
+  const bodyR = 0.22;
+  const legLen = 0.3;
+  const neckLen = 0.22;
+  const neckTilt = -0.5;
+  const hornLen = 0.22;
+  const hornSweep = -0.4;
+  const built = quadruped({
+    body: m.gorgonHide,
     belly: m.bone,
     accent: m.bone,
     eye: m.venom,
     hoof: m.dark,
-    bodyLen: 0.5,
-    bodyR: 0.22,
-    legLen: 0.24,
-    neckLen: 0.22,
-    neckTilt: -0.5,
+    bodyLen,
+    bodyR,
+    legLen,
+    neckLen,
+    neckTilt,
     head: "bull",
     digitigrade: false,
     tailStyle: "reptile",
-    spikes: { mat: m.verdigris, count: 6, len: 0.09 },
+    horns: { len: hornLen, r: 0.045, spread: 0.7, sweep: hornSweep },
   });
+  const g = built.group;
+
+  // Overlapping armor plates down the spine, shoulder to rump: flattened,
+  // overlapping domes read as plating where a smooth back reads as a lump.
+  const plateCount = 4;
+  const zFrom = -bodyLen * 0.32;
+  const zTo = bodyLen * 0.42;
+  for (let i = 0; i < plateCount; i++) {
+    const t = i / (plateCount - 1);
+    const z = zFrom + (zTo - zFrom) * t;
+    const plate = add(g, new THREE.SphereGeometry(bodyR * 0.5, 10, 8), m.plate, 0, built.backY + 0.01, z);
+    plate.scale.set(1.15, 0.4, 0.85);
+  }
+  // A raised, plated collar/hump at the shoulders.
+  const collar = add(g, new THREE.SphereGeometry(bodyR * 0.62, 12, 10), m.plate, 0, built.backY + 0.05, -bodyLen * 0.38);
+  collar.scale.set(1.1, 0.55, 0.95);
+
+  // Head/neck position, replicated from quadruped()'s own math for a single
+  // "bull" head, so the bigger eyes and the corrected height below don't
+  // need to touch common.js.
+  const neckBaseY = legLen + bodyR * 0.75 + bodyR * 0.5;
+  const hY = neckBaseY + neckLen * 0.78;
+  const neckZ = -bodyLen * 0.5;
+  const hZ = neckZ - 0.06 - neckLen * 0.5 * Math.sin(-neckTilt) - 0.06;
+
+  // Bigger venom-green eyes, layered directly over the pair quadruped()'s
+  // "bull" head already placed at this same spot -- its gaze is its weapon.
+  glowEyes(g, m.venom, { y: hY + 0.02, x: 0.05, z: hZ - 0.08, r: 0.024 });
+
+  // quadruped() folds its own small curl-horn pair into the reported height,
+  // but not the larger straight pair added via `horns` above -- horns this
+  // big clear the skull, so the tip is measured by hand from the same
+  // y/len/sweep common.js's hornPair call uses inside the "bull" branch.
+  const headTop = hY + 0.12;
+  const hornBaseY = hY + 0.08;
+  const hornTipY = hornBaseY + (hornLen / 2) * Math.cos(hornSweep);
+  built.height = Math.max(headTop, hornTipY);
+  return built;
 }
 
 // q -- a lean, winged two-legged reptile (in spirit -- dragon() always
@@ -163,8 +211,6 @@ function wyvern(m) {
   const bodyLen = 0.4;
   const bodyR = 0.13;
   const tailLen = 0.55;
-  const droop = 0.4;
-  const links = 4;
   const built = dragon({
     body: m.scale,
     belly: m.bone,
@@ -181,17 +227,12 @@ function wyvern(m) {
     tailLen,
     spikes: true,
   });
-  // dragon()'s internal tail() call doesn't expose a tip cone, so the same
-  // drooping-link math is walked here to find where the tail ends and cap
-  // it with a stinger (see the report for a suggested tipMat/tipLen option).
-  let py = built.bodyY - 0.02;
-  let pz = bodyLen * 0.5;
-  const step = tailLen / links;
-  for (let i = 0; i < links; i++) {
-    pz += step * Math.cos(droop * (i + 1) * 0.25);
-    py -= step * Math.sin(droop * (i + 1) * 0.25);
-  }
-  add(built.group, new THREE.ConeGeometry(bodyR * 0.25, 0.15, 8), m.venom, 0, py, pz, -1.1, 0, 0);
+  // Cap the tail dragon() built with a venomous stinger, at the tip it
+  // reports -- re-deriving the droop math here once produced a NaN position
+  // (from a field the dragon no longer returned) that made the whole piece
+  // vanish from the board.
+  const tip = built.tailTip;
+  add(built.group, new THREE.ConeGeometry(bodyR * 0.25, 0.15, 8), m.venom, tip.x, tip.y, tip.z, -1.1, 0, 0);
   return built;
 }
 

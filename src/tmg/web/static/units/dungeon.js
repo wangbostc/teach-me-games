@@ -38,6 +38,8 @@ const PALETTE = {
   magentaGlow: 0xd24bd2,
   greyHide: 0x6f6478,
   bone: 0xcfc3a8,
+  manticoreTawny: 0xb5822f,
+  darkMane: 0x3b2415,
 };
 
 export const BASE_COLOR = 0x2e2438;
@@ -52,8 +54,9 @@ function makeMats() {
     purple: cloth(PALETTE.purple),
     blackScale: hide(PALETTE.blackScale),
     pallidSkin: skin(PALETTE.pallidTan),
-    tanHide: hide(PALETTE.pallidTan),
     bloodRed: cloth(PALETTE.bloodRed),
+    manticoreBody: hide(PALETTE.manticoreTawny),
+    darkMane: hide(PALETTE.darkMane),
     gold: burnishedGold(PALETTE.gold),
     iron: polishedMetal(PALETTE.iron, { roughness: 0.55 }),
     magentaGlow: glow(PALETTE.magentaGlow, PALETTE.magentaGlow, 1.0),
@@ -181,25 +184,81 @@ function minotaur(m) {
   return built;
 }
 
-// q -- a lion-bodied beast with bat wings and a scorpion tail.
+// q -- a lion-bodied beast with bat wings and a scorpion tail: recognizably
+// a big cat first, monster second.
 function manticore(m) {
+  const bodyLen = 0.46;
+  const bodyR = 0.17;
+  const legLen = 0.36;
+  const neckLen = 0.28;
+  const neckTilt = -0.7; // quadruped()'s default -- named here so the hand
+  // math below (mane and tail placement, and the corrected height) tracks it
+  // honestly if it's ever changed.
   const built = quadruped({
-    body: m.tanHide,
-    mane: m.blackScale,
+    body: m.manticoreBody,
+    mane: m.darkMane,
     accent: m.bloodRed,
     eye: m.magentaGlow,
     hoof: m.iron,
     head: "lion",
-    bodyLen: 0.46,
-    bodyR: 0.19,
-    legLen: 0.32,
-    neckLen: 0.28,
+    bodyLen,
+    bodyR,
+    legLen,
+    neckLen,
     digitigrade: true,
     tailStyle: "scorpion",
   });
-  addWings(built.group, m.blackScale, {
+  const g = built.group;
+
+  // Head/neck position, replicated from quadruped()'s own math for a single
+  // "lion" head, so the reinforced mane and extra tail below can be placed
+  // -- and the reported height corrected -- without touching common.js.
+  const bodyY = built.bodyY;
+  const neckBaseY = bodyY + bodyR * 0.5;
+  const hY = neckBaseY + neckLen * 0.78;
+  const neckZ = -bodyLen * 0.5;
+  const hZ = neckZ - 0.06 - neckLen * 0.5 * Math.sin(-neckTilt) - 0.06;
+
+  // Reinforce the mane: the "lion" head already drops a thin torus, which
+  // reads as a disc from a distance. A second, larger ring plus a scatter of
+  // overlapping dark tufts around the head/neck sells an unmistakable mane.
+  const maneY = hY;
+  const maneZ = hZ + 0.05;
+  const maneMainR = 0.14;
+  const maneTubeR = 0.05;
+  add(g, new THREE.TorusGeometry(maneMainR, maneTubeR, 8, 16), m.darkMane, 0, maneY, maneZ, 0.1, 0, 0);
+  const tuftCount = 7;
+  for (let i = 0; i < tuftCount; i++) {
+    const a = (i / tuftCount) * Math.PI * 2;
+    add(
+      g,
+      new THREE.SphereGeometry(0.045, 8, 8),
+      m.darkMane,
+      Math.cos(a) * 0.12,
+      maneY + Math.sin(a) * 0.09,
+      maneZ + (i % 2 === 0 ? 0.015 : -0.015)
+    );
+  }
+
+  // A second, thicker, plated scorpion tail alongside the thin one that
+  // tailStyle:"scorpion" already built: tapering cylinder links curling up
+  // and forward over the back, capped with a hooked, venom-glowing stinger.
+  let tpy = bodyY + 0.02;
+  let tpz = bodyLen * 0.5 + 0.03;
+  const tailLinks = 5;
+  for (let i = 0; i < tailLinks; i++) {
+    const rr = 0.055 - i * 0.008;
+    add(g, new THREE.CylinderGeometry(rr * 0.8, rr, 0.11, 8), m.dark, 0, tpy, tpz, 1.05 - i * 0.42, 0, 0);
+    tpy += 0.09 - i * 0.006;
+    tpz -= 0.02 + i * 0.012;
+  }
+  add(g, new THREE.ConeGeometry(0.034, 0.1, 8), m.dark, 0, tpy + 0.03, tpz - 0.05, -2.3, 0, 0);
+  add(g, new THREE.SphereGeometry(0.022, 8, 8), m.magentaGlow, 0, tpy + 0.09, tpz - 0.11);
+
+  // Bat wings at the shoulders, in a dark membrane material.
+  addWings(g, m.blackScale, {
     x: 0.17,
-    y: built.bodyY + 0.06,
+    y: bodyY + 0.06,
     z: 0.04,
     span: 0.55,
     chord: 0.3,
@@ -207,6 +266,15 @@ function manticore(m) {
     sweep: 0.5,
     type: "bat",
   });
+
+  // quadruped()'s reported height already tracks the head (and, via its own
+  // thin scorpion tail, sometimes a touch more) -- but the contract excludes
+  // tails and stingers, and the reinforced mane can now stand a little proud
+  // of the skull, so the true head-only top is recomputed by hand instead of
+  // trusted from the built-in tail's contribution.
+  const headTop = hY + 0.12;
+  const maneTop = maneY + maneMainR + maneTubeR;
+  built.height = Math.max(headTop, maneTop);
   return built;
 }
 

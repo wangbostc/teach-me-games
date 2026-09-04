@@ -29,6 +29,7 @@ const PALETTE = {
   earthBrown: 0x8a6a4a,
   rockGrey: 0x7a7a80,
   psychicViolet: 0xdd88ff,
+  psychicVioletBright: 0xf0c8ff,
   phoenixFlame: 0xff5a1e,
   spiritWhite: 0xf2f4f8,
 };
@@ -58,8 +59,19 @@ function makeMats() {
     fire: glow(PALETTE.fireOrange, PALETTE.fireOrange, 1.2),
     earthBody: stone(PALETTE.earthBrown),
     rock: stone(PALETTE.rockGrey),
-    violet: glow(PALETTE.psychicViolet, PALETTE.psychicViolet, 0.55),
-    violetBright: glow(PALETTE.psychicViolet, PALETTE.psychicViolet, 1.1),
+    // Psychic elemental: a dim violet glow for the body, a brighter,
+    // paler glow for the head, and a set of fading tones for its hem and
+    // halo rings so the whole piece reads as luminous rather than flat.
+    violet: glow(PALETTE.psychicViolet, PALETTE.psychicViolet, 0.5),
+    violetBright: glow(PALETTE.psychicVioletBright, PALETTE.psychicViolet, 1.2),
+    thirdEye: glow(PALETTE.psychicVioletBright, PALETTE.psychicVioletBright, 2.0),
+    hemRing0: glow(PALETTE.psychicViolet, PALETTE.psychicViolet, 0.6),
+    hemRing1: glow(PALETTE.psychicViolet, PALETTE.psychicViolet, 0.45),
+    hemRing2: glow(PALETTE.psychicViolet, PALETTE.psychicViolet, 0.3),
+    hemRing3: glow(PALETTE.psychicViolet, PALETTE.psychicViolet, 0.15),
+    haloBright: glow(PALETTE.psychicVioletBright, PALETTE.psychicViolet, 1.3),
+    haloFaint: glow(PALETTE.psychicViolet, PALETTE.psychicViolet, 0.4),
+    psychicOrb: glow(PALETTE.psychicVioletBright, PALETTE.psychicVioletBright, 1.6),
     flame: glow(PALETTE.phoenixFlame, PALETTE.phoenixFlame, 0.9),
     flameBright: glow(0xffcf6b, PALETTE.phoenixFlame, 1.3),
     flameFeather: feathers(0xff7a3a),
@@ -144,31 +156,91 @@ function earthelemental(m) {
 }
 
 // q -- a luminous humanoid spirit, ethereal and the second-grandest piece.
-// legs: "none" gives it a tapering smoke-like base instead of feet; no
-// cloth, just glowing violet body and a brighter glowing head, with a ring
-// of shards (the same orbiting-shard idea elemental() uses) circling the
-// torso like a halo.
+// legs: "none" gives it a tapering smoke-like base instead of feet; the
+// body glows dim violet, the head glows brighter and paler so it is the
+// single brightest point, and a third eye, a dissolving hem, and two
+// orbiting rings of shards mark it unmistakably as a psychic spirit rather
+// than a plain robed cone.
 function psychicelemental(m) {
+  const legLen = 0.5;
+  const torsoLen = 0.34;
+  const headR = 0.1;
   const built = humanoid({
     body: m.violet,
     skin: m.violetBright,
     accent: m.gold,
     legs: "none",
     head: "human",
-    legLen: 0.5,
-    torsoLen: 0.34,
-    headR: 0.1,
+    legLen,
+    torsoLen,
+    headR,
   });
   const g = built.group;
-  const ringY = built.shoulderY - 0.08;
-  const shards = 8;
-  for (let i = 0; i < shards; i++) {
-    const a = (i / shards) * Math.PI * 2;
-    const rr = 0.22;
-    add(g, new THREE.TetrahedronGeometry(0.028), m.violetBright, Math.cos(a) * rr, ringY + Math.sin(i * 1.7) * 0.07, Math.sin(a) * rr, a, a * 0.5, 0);
+
+  // Third eye: the brightest single point, on the forehead -- centered
+  // just proud of the head sphere's own surface (distance headR) so it
+  // actually protrudes instead of sitting mostly submerged in the head.
+  add(g, new THREE.SphereGeometry(0.03, 10, 8), m.thirdEye, 0, built.headY + headR * 0.15, -headR * 1.05);
+
+  // Dissolving hem: humanoid()'s legs:"none" cone tapers linearly from a
+  // point at the waist (radius 0) to its widest at the ground (radius
+  // 0.19). Four rings trace that exact surface -- r = 0.19 * t at the same
+  // t used for y -- each dimmer than the last, so the skirt reads as
+  // bands of light fading toward the ground rather than a separate ring
+  // floating outside a still-hard cone edge.
+  const hip = legLen;
+  const beltY = hip + 0.05;
+  const hemTopY = beltY + 0.02;
+  const hemBottomY = beltY - (legLen + 0.12) + 0.02;
+  [m.hemRing0, m.hemRing1, m.hemRing2, m.hemRing3].forEach((mat, i) => {
+    const t = (i + 1) / 5;
+    const y = hemTopY - (hemTopY - hemBottomY) * t;
+    const r = 0.19 * t;
+    add(g, new THREE.TorusGeometry(r, 0.014, 8, 20), mat, 0, y, 0, Math.PI / 2, 0, 0);
+  });
+
+  // Psychic halo: a crown of shards orbiting at head height, tilted like a
+  // floating ring of energy, plus a larger, fainter ring circling the
+  // waist.
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const rr = 0.25;
+    add(g, new THREE.OctahedronGeometry(0.02), m.haloBright, Math.cos(a) * rr, built.headY + Math.sin(a) * rr * 0.15, Math.sin(a) * rr, 0.4, a, 0);
   }
-  add(g, new THREE.SphereGeometry(0.05, 12, 10), m.violetBright, 0, built.shoulderY - 0.12, 0);
-  return built;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const rr = 0.34;
+    add(g, new THREE.OctahedronGeometry(0.026), m.haloFaint, Math.cos(a) * rr, beltY + Math.sin(a) * rr * 0.15, Math.sin(a) * rr, 0.4, a, 0);
+  }
+
+  // Arms raised and angled outward as if channelling energy -- extra
+  // capsules layered over humanoid()'s own arms, which hang at rest and
+  // have no exposed rig to rotate -- with a small glowing orb hovering
+  // where the raised hands would meet.
+  const armRx = -1.1;
+  const armRzMag = 0.5;
+  const armLen = 0.24;
+  const armR = 0.035;
+  const armOriginY = built.shoulderY + 0.05;
+  const armOriginZ = -0.05;
+  pair((s) => {
+    // rz applies before rx under the default XYZ Euler order, so a raised
+    // limb's outward lean is -s * armRzMag, not s * armRzMag -- the same
+    // sign that reads "outward" for a hanging limb flips once the limb is
+    // swung up past horizontal.
+    add(g, new THREE.CapsuleGeometry(armR, armLen, 4, 10), m.violet, s * 0.2, armOriginY, armOriginZ, armRx, 0, -s * armRzMag);
+  });
+  // The orb sits at the hands' tip, found by carrying the capsule's local
+  // +Y axis through that same Rz-then-Rx rotation (the x-components cancel
+  // between the mirrored left/right arms, so only y and z matter here).
+  const armReach = armLen / 2 + armR;
+  const armTipY = armOriginY + Math.cos(armRzMag) * Math.cos(armRx) * armReach;
+  const armTipZ = armOriginZ + Math.cos(armRzMag) * Math.sin(armRx) * armReach;
+  add(g, new THREE.SphereGeometry(0.045, 12, 10), m.psychicOrb, 0, armTipY, armTipZ);
+
+  // Honest top: the head sphere's crown, not the halo rings floating
+  // above and around it.
+  return { group: g, height: built.height };
 }
 
 // k -- a great firebird, built entirely from primitives (no shared body

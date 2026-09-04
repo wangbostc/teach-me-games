@@ -69,7 +69,8 @@ function makeMats() {
   };
 }
 
-// p -- horse body with an elf archer's torso grafted at the withers.
+// p -- horse body with an elf archer's torso grafted into the chest, so the
+// two halves read as one creature rather than a rider perched on a mount.
 function centaur(m) {
   const bodyLen = 0.5;
   const bodyR = 0.17;
@@ -87,8 +88,8 @@ function centaur(m) {
   const g = mount.group;
 
   // Elf torso, built at default proportions so the stock bow/quiver hand
-  // offsets line up, then scaled down and seated where the horse's neck
-  // would rise.
+  // offsets line up, then scaled down and grafted into the FRONT of the
+  // barrel where the neck would rise -- not sat on the back like a rider.
   const torso = humanoid({
     body: m.leather,
     skin: m.skin,
@@ -98,16 +99,39 @@ function centaur(m) {
     boot: m.leather,
     legs: "bare",
   });
-  bow(torso.group, { limb: m.bowWood, string: m.string }, 0.22);
-  quiver(torso.group, { body: m.leather, fletch: m.string });
 
-  const scale = 0.8;
+  const scale = 0.9;
+  const joinZ = -bodyLen * 0.42;
+  // The humanoid's hip lands just above the horse's chest sphere, so the
+  // two silhouettes overlap instead of meeting at a hard step.
+  const joinY = mount.bodyY + bodyR * 0.3;
   torso.group.scale.setScalar(scale);
-  torso.group.position.set(0, mount.backY - torso.hip * scale, -bodyLen * 0.32);
+  torso.group.position.set(0, joinY - torso.hip * scale, joinZ);
   g.add(torso.group);
 
+  // Waist blend: a stout hide sphere at the join, in the horse's own hide
+  // material, so the transition reads as one continuous body rather than a
+  // doll glued to a horse.
+  add(g, new THREE.SphereGeometry(bodyR * 0.9, 14, 12), m.horseHide, 0, joinY, joinZ);
+
+  // Bow in the left hand, swung forward on its own pivot so the arm reads
+  // as reaching ahead of the body rather than hanging straight down. bow()
+  // is fixed geometry with no rotation knob of its own and no exposed link
+  // to humanoid()'s arm rig, so limb and string are built into their own
+  // sub-group and that group is angled instead -- rotating the two meshes
+  // separately would swing the bow's arc without moving its string, tearing
+  // the two apart.
+  const bowGroup = new THREE.Group();
+  bow(bowGroup, { limb: m.bowWood, string: m.string }, -0.22);
+  bowGroup.rotation.y = 0.3;
+  bowGroup.position.z = -0.07;
+  torso.group.add(bowGroup);
+  // A leather bracer on the bow forearm.
+  add(torso.group, new THREE.CylinderGeometry(0.05, 0.05, 0.05, 10), m.leather, -0.2, 0.52, -0.03, Math.PI / 2, 0, 0);
+  quiver(torso.group, { body: m.leather, fletch: m.string });
+
   const topY = torso.group.position.y + torso.height * scale;
-  return { group: g, height: Math.max(topY, mount.height) };
+  return { group: g, height: topY };
 }
 
 // n -- white winged horse.
