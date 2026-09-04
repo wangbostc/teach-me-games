@@ -1,6 +1,8 @@
 "use strict";
 
-let board = null;
+import { Board3D } from "/static/board3d.js";
+
+let board3d = null;
 let learningMode = false;
 let userColor = "white";
 let lastKnownFen = null;
@@ -20,7 +22,7 @@ function apiGet(path) {
 function showReport(text) {
   const section = document.getElementById("report");
   section.hidden = false;
-  section.textContent = text;
+  document.getElementById("report-text").textContent = text;
 }
 
 function showStartError(message) {
@@ -28,7 +30,6 @@ function showStartError(message) {
   if (!el) {
     el = document.createElement("p");
     el.id = "start-error";
-    el.style.color = "#b00";
     document.getElementById("setup").appendChild(el);
   }
   el.textContent = message;
@@ -39,6 +40,15 @@ function maybeFetchReport(gameOver) {
   apiGet("/api/game/report").then(({ ok, data }) => {
     if (ok) showReport(data.report_text);
   });
+}
+
+// A move's own eval_text already says "good for you" / "bad for you" / "even"
+// (see tmg.web.explain._eval_text) -- reused here only to pick the option
+// card's edge-tab color, never re-derived or restated as a number of our own.
+function evalClass(evalText) {
+  if (evalText.indexOf("bad for you") !== -1) return "eval-bad";
+  if (evalText.indexOf("even") !== -1) return "eval-even";
+  return "";
 }
 
 // Bumped on every renderOptions() call so a late-arriving /explanations
@@ -59,32 +69,40 @@ function renderOptions() {
     const container = document.getElementById("options");
     container.hidden = false;
     container.innerHTML = "";
-    const explanationNodes = {};
+    const cardsByUci = {};
     data.options.forEach((option) => {
       const div = document.createElement("div");
-      div.className = "option";
+      div.className = "option-card loading " + evalClass(option.eval_text);
       // option.move_text and option.eval_text are our own rendered text.
       // The explanation text node (filled in below, once it arrives) will
       // hold claude-generated prose -- the one place in this app where
       // model output reaches the DOM. Insert everything as text nodes
       // (never innerHTML) so nothing it contains is ever parsed as markup.
-      const strong = document.createElement("strong");
-      strong.textContent = option.move_text;
-      div.appendChild(strong);
-      div.appendChild(document.createTextNode(" (" + option.eval_text + ")"));
-      div.appendChild(document.createElement("br"));
-      const explanationNode = document.createTextNode("Loading explanation...");
-      div.appendChild(explanationNode);
+      const moveText = document.createElement("span");
+      moveText.className = "move-text";
+      moveText.textContent = option.move_text;
+      div.appendChild(moveText);
+      div.appendChild(document.createTextNode(" "));
+      const evalTextEl = document.createElement("span");
+      evalTextEl.className = "eval-text";
+      evalTextEl.textContent = "(" + option.eval_text + ")";
+      div.appendChild(evalTextEl);
+      const explanationEl = document.createElement("span");
+      explanationEl.className = "explanation";
+      explanationEl.textContent = "Thinking through this move…";
+      div.appendChild(explanationEl);
       div.addEventListener("click", () => playMove(option.uci));
       container.appendChild(div);
-      explanationNodes[option.uci] = explanationNode;
+      cardsByUci[option.uci] = { card: div, explanationEl: explanationEl };
     });
 
     apiGet("/api/game/options/explanations").then(({ ok: explainOk, data: explainData }) => {
       if (requestId !== optionsRequestId) return;
-      Object.keys(explanationNodes).forEach((uci) => {
+      Object.keys(cardsByUci).forEach((uci) => {
+        const { card, explanationEl } = cardsByUci[uci];
         const text = explainOk && explainData.explanations[uci];
-        explanationNodes[uci].textContent = text || "(explanation unavailable)";
+        explanationEl.textContent = text || "(explanation unavailable)";
+        card.classList.remove("loading");
       });
     });
   });
@@ -92,7 +110,7 @@ function renderOptions() {
 
 function afterMove(data) {
   lastKnownFen = data.fen;
-  board.position(data.fen);
+  board3d.setPosition(data.fen);
   document.getElementById("status").textContent = data.game_over
     ? "Game over: " + data.result
     : "";
@@ -107,22 +125,11 @@ function afterMove(data) {
 function playMove(uci) {
   apiPost("/api/game/move", { uci: uci }).then(({ ok, data }) => {
     if (!ok) {
-      board.position(lastKnownFen);
+      board3d.setPosition(lastKnownFen);
       return;
     }
     afterMove(data);
   });
-}
-
-function onDrop(source, target) {
-  // Always queen on promotion -- a v1 simplification; under-promotion is
-  // rare enough at beginner level that a picker isn't worth building yet.
-  const piece = board.position()[source];
-  const isPromotion = piece && piece[1] === "P" && (target[1] === "8" || target[1] === "1");
-  const uci = source + target + (isPromotion ? "q" : "");
-  playMove(uci);
-  // Optimistic: chessboard.js already placed the piece; playMove reverts
-  // it via lastKnownFen if the server rejects the move.
 }
 
 function startGame() {
@@ -143,18 +150,13 @@ function startGame() {
     document.getElementById("game").hidden = false;
 
     lastKnownFen = data.fen;
-    board = Chessboard("board", {
-      position: data.fen,
-      draggable: !learningMode,
+    if (board3d) board3d.dispose();
+    board3d = new Board3D(document.getElementById("board3d"), {
       orientation: userColor,
-      onDrop: onDrop,
-      // The npm/unpkg tarball for chessboardjs 1.0.0 does not ship the
-      // piece PNGs (only css/js) -- pieceTheme's default relative path
-      // ("img/chesspieces/wikipedia/{piece}.png") 404s against our own
-      // FastAPI origin, leaving the board pieceless. Point it at the
-      // project's own site, which does host them.
-      pieceTheme: "https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png",
+      onMove: playMove,
     });
+    board3d.setPosition(data.fen);
+    board3d.setInteractive(!learningMode);
 
     if (learningMode) {
       renderOptions();

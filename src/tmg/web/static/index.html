@@ -2,51 +2,75 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>tmg -- play</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
     rel="stylesheet"
-    href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css"
   />
-  <style>
-    body { font-family: monospace; max-width: 760px; margin: 2rem auto; }
-    #board { width: 480px; }
-    #options .option { border: 1px solid #999; padding: 0.75rem; margin-bottom: 0.5rem; cursor: pointer; }
-    #options .option:hover { background: #f0f0f0; }
-    #report { white-space: pre-wrap; border-top: 1px solid #999; margin-top: 1.5rem; padding-top: 1rem; }
-    [hidden] { display: none; }
-  </style>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+      }
+    }
+  </script>
 </head>
 <body>
-  <h1>tmg -- play</h1>
+  <header class="masthead">
+    <h1 class="wordmark">tmg</h1>
+    <p class="tagline">a quiet study board</p>
+  </header>
 
-  <section id="setup">
-    <label>Side:
-      <select id="side">
-        <option value="white">White</option>
-        <option value="black">Black</option>
-      </select>
-    </label>
-    <label>Difficulty:
-      <select id="difficulty">
-        <option value="easy">Easy</option>
-        <option value="medium">Medium</option>
-        <option value="hard">Hard</option>
-      </select>
-    </label>
-    <label><input type="checkbox" id="learning-mode" /> Learning mode</label>
-    <button id="start">Start game</button>
-  </section>
+  <main>
+    <section id="setup" class="card">
+      <h2>New game</h2>
+      <div class="field-row">
+        <label class="field">
+          <span>Side</span>
+          <select id="side">
+            <option value="white">White</option>
+            <option value="black">Black</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Difficulty</span>
+          <select id="difficulty">
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
+      </div>
+      <label class="checkbox-field">
+        <input type="checkbox" id="learning-mode" />
+        <span
+          >Learning mode
+          <small>See the engine's top moves explained as you play, instead of moving freely.</small></span
+        >
+      </label>
+      <button id="start" class="btn-primary">Start game</button>
+    </section>
 
-  <section id="game" hidden>
-    <div id="board"></div>
-    <div id="options" hidden></div>
-    <div id="status"></div>
-  </section>
+    <section id="game" class="game-layout" hidden>
+      <div class="board-column">
+        <div id="board3d" class="board-stage"></div>
+        <p id="status" class="status-line"></p>
+      </div>
+      <aside class="notebook">
+        <div id="options" class="options-stack" hidden></div>
+      </aside>
+    </section>
 
-  <section id="report" hidden></section>
+    <section id="report" class="card report-card" hidden>
+      <h2>Report</h2>
+      <pre id="report-text"></pre>
+    </section>
+  </main>
 
-  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-  <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
-  <script src="/static/app.js"></script>
+  <script type="module" src="/static/app.js"></script>
 </body>
 </html>

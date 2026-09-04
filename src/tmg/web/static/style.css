@@ -1,0 +1,327 @@
+/* tmg -- play: a quiet study desk, not a game screen.
+   Palette, type, and layout tokens are named so every color/weight
+   decision traces back to one system rather than being picked ad hoc. */
+
+:root {
+  --parchment: #f6f1e7;
+  --parchment-dim: #efe8d8;
+  --ink: #23201b;
+  --ink-soft: rgba(35, 32, 27, 0.68);
+  --felt: #2f3b36;
+  --walnut: #8b5e3c;
+  --walnut-dark: #6b4626;
+  --brass: #b08d3e;
+  --brick: #a6432f;
+  --hairline: rgba(35, 32, 27, 0.14);
+  --card-shadow: 0 1px 2px rgba(35, 32, 27, 0.06), 0 4px 10px rgba(35, 32, 27, 0.07);
+
+  --font-display: "Fraunces", "Iowan Old Style", serif;
+  --font-body: "Public Sans", -apple-system, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  padding: 2.5rem 1.5rem 4rem;
+  background: var(--parchment);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* -- Masthead -------------------------------------------------------- */
+
+.masthead {
+  max-width: 900px;
+  margin: 0 auto 2rem;
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 2.1rem;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--felt);
+}
+
+.tagline {
+  margin: 0.15rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+  font-style: italic;
+  font-family: var(--font-display);
+}
+
+/* -- Cards (setup + report share this shell) -------------------------- */
+
+.card {
+  background: #fffdf8;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: var(--card-shadow);
+  padding: 1.75rem;
+}
+
+.card h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.3rem;
+  margin: 0 0 1.25rem;
+  color: var(--felt);
+}
+
+/* -- Setup form -------------------------------------------------------- */
+
+.field-row {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.field select {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--parchment);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+  min-width: 9rem;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%),
+    linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%);
+  background-position: calc(100% - 16px) center, calc(100% - 11px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.field select:focus-visible,
+.checkbox-field input:focus-visible,
+.btn-primary:focus-visible,
+.option-card:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin-bottom: 1.4rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.checkbox-field input {
+  margin-top: 0.2rem;
+  accent-color: var(--walnut);
+}
+
+.checkbox-field small {
+  display: block;
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+
+.btn-primary {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--parchment);
+  background: var(--felt);
+  border: none;
+  border-radius: 4px;
+  padding: 0.65rem 1.4rem;
+  cursor: pointer;
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.btn-primary:hover {
+  background: var(--walnut-dark);
+}
+
+.btn-primary:active {
+  transform: translateY(1px);
+}
+
+#start-error {
+  color: var(--brick);
+  font-size: 0.9rem;
+  margin: 0.9rem 0 0;
+}
+
+/* -- Game layout: board beside its notebook, like a diagram beside its
+      commentary in a chess primer. -------------------------------------- */
+
+.game-layout {
+  display: flex;
+  gap: 1.75rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.board-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.board-stage {
+  width: 480px;
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--card-shadow);
+  cursor: grab;
+}
+
+.board-stage canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.status-line {
+  margin: 0;
+  min-height: 1.2em;
+  font-family: var(--font-body);
+  font-weight: 600;
+  color: var(--felt);
+}
+
+.notebook {
+  flex: 1 1 280px;
+  min-width: 260px;
+}
+
+/* -- Option cards: the signature element. Styled like an index card from
+      a chess study, with an edge tab keyed to the move's own evaluation. */
+
+.options-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.option-card {
+  background: #fffdf8;
+  border: 1px solid var(--hairline);
+  border-left: 4px solid var(--brass);
+  border-radius: 3px;
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+  box-shadow: var(--card-shadow);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  animation: card-in 220ms ease both;
+}
+
+.option-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(35, 32, 27, 0.08), 0 6px 14px rgba(35, 32, 27, 0.1);
+}
+
+.option-card.eval-bad {
+  border-left-color: var(--brick);
+}
+
+.option-card.eval-even {
+  border-left-color: var(--ink-soft);
+}
+
+.option-card .move-text {
+  font-family: var(--font-body);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.option-card .eval-text {
+  font-family: var(--font-data);
+  font-size: 0.85rem;
+  color: var(--walnut-dark);
+}
+
+.option-card .explanation {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+}
+
+.option-card.loading .explanation {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .option-card.loading .explanation {
+    animation: none;
+  }
+  .option-card {
+    animation: none;
+  }
+}
+
+/* -- Report: rendered exactly as tmg's CLI prints it -- a ledger page. -- */
+
+.report-card {
+  margin-top: 2rem;
+}
+
+.report-card pre {
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: 0.88rem;
+  white-space: pre-wrap;
+  color: var(--ink);
+}
