@@ -168,7 +168,20 @@ function buildBoard(scene) {
   );
   frame.position.y = -0.06;
   frame.receiveShadow = true;
+  frame.castShadow = true;
   scene.add(frame);
+
+  // The desk the board sits on: a broad, dark leather-topped surface that
+  // catches the board's shadow and fades into the room's fog. Without it the
+  // board floats in a void, and floating is the least "real" thing an
+  // object can do.
+  const desk = new THREE.Mesh(
+    new THREE.CylinderGeometry(15, 15, 0.3, 48),
+    new THREE.MeshStandardMaterial({ color: 0x3b2a22, roughness: 0.85, metalness: 0.02, envMapIntensity: 0.4 })
+  );
+  desk.position.y = -0.29;
+  desk.receiveShadow = true;
+  scene.add(desk);
 
   return squareMeshes;
 }
@@ -213,9 +226,13 @@ export class Board3D {
     const height = this.container.clientHeight || width;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(COLORS.light);
+    // A warm, dim room behind a board lit from above: the pieces read as
+    // objects in a space, not cut-outs on the page colour. A touch of fog
+    // lets the desk fade out instead of ending at a hard edge.
+    this.scene.background = new THREE.Color(0x2a2420);
+    this.scene.fog = new THREE.Fog(0x2a2420, 12, 26);
 
-    this.camera = new THREE.PerspectiveCamera(46, width / height, 0.1, 100);
+    this.camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100);
     this._setDefaultCameraPose();
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -237,37 +254,46 @@ export class Board3D {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.maxPolarAngle = Math.PI * 0.49;
-    this.controls.minDistance = 5;
-    this.controls.maxDistance = 20;
-    this.controls.target.set(0, 0, 0);
+    this.controls.minDistance = 3;
+    this.controls.maxDistance = 18;
+    this.controls.target.set(0, 0.2, 0);
 
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-    const key = new THREE.DirectionalLight(0xfff3e0, 1.6);
-    key.position.set(4, 8, 4);
+    // Three-point lighting: a warm key from high front-left casting the one
+    // shadow, a cool fill from the opposite side, and a low rim light from
+    // behind so silhouettes separate from the dark room.
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.22));
+    const key = new THREE.DirectionalLight(0xfff1dc, 2.0);
+    key.position.set(-4, 9, 5);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     // Fit the shadow frustum to the board so the 2048 map isn't spent on
     // empty space, and bias away the acne that fine geometry otherwise gets.
-    key.shadow.camera.left = key.shadow.camera.bottom = -6;
-    key.shadow.camera.right = key.shadow.camera.top = 6;
+    key.shadow.camera.left = key.shadow.camera.bottom = -6.5;
+    key.shadow.camera.right = key.shadow.camera.top = 6.5;
     key.shadow.camera.near = 1;
-    key.shadow.camera.far = 24;
+    key.shadow.camera.far = 26;
     key.shadow.bias = -0.0006;
     key.shadow.normalBias = 0.02;
     this.scene.add(key);
-    const fill = new THREE.DirectionalLight(0xdce8ff, 0.3);
-    fill.position.set(-4, 4, -4);
+    const fill = new THREE.DirectionalLight(0xcfdcff, 0.55);
+    fill.position.set(5, 4, -2);
     this.scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffd9a8, 0.7);
+    rim.position.set(0, 2.5, -9);
+    this.scene.add(rim);
 
     this.squareMeshes = buildBoard(this.scene);
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
   }
 
+  // Close and fairly low -- the view of someone sitting at the board, not a
+  // ceiling camera. The far rank still fits; the near pieces fill the frame.
   _setDefaultCameraPose() {
-    const z = this.orientation === "white" ? 8.6 : -8.6;
-    this.camera.position.set(0, 8.4, z);
-    this.camera.lookAt(0, 0, 0);
+    const z = this.orientation === "white" ? 8.2 : -8.2;
+    this.camera.position.set(0, 6.4, z);
+    this.camera.lookAt(0, 0.1, 0);
+    if (this.controls) this.controls.target.set(0, 0.1, 0);
   }
 
   setOrientation(orientation) {

@@ -19,7 +19,9 @@ import * as THREE from "three";
 
 // Target body height per chess role, in board squares. Shared by board3d.js
 // and the preview page so both scale units identically.
-export const ROLE_HEIGHT = { p: 0.55, n: 0.7, b: 0.78, r: 0.66, q: 0.92, k: 1.02 };
+// A physical set stands its king about 1.7 squares tall; these run a little
+// under that so raised wings and weapons still clear the neighbouring files.
+export const ROLE_HEIGHT = { p: 0.64, n: 0.82, b: 0.9, r: 0.76, q: 1.06, k: 1.18 };
 
 // The true top of a built group, for units with no raised weapon or wing to
 // discount. Body plans that end in loose geometry (elementals, insects,

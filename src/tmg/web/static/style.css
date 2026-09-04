@@ -39,7 +39,7 @@ body {
 }
 
 main {
-  max-width: 900px;
+  max-width: 1180px;
   margin: 0 auto;
 }
 
@@ -50,7 +50,7 @@ main {
 /* -- Masthead -------------------------------------------------------- */
 
 .masthead {
-  max-width: 900px;
+  max-width: 1180px;
   margin: 0 auto 2rem;
 }
 
@@ -204,7 +204,9 @@ main {
 }
 
 .board-stage {
-  width: 480px;
+  /* The board is the whole point of the page; give it the room a real one
+     takes on a desk. Learning Mode's cards wrap beneath it on narrow screens. */
+  width: 720px;
   max-width: 100%;
   aspect-ratio: 1 / 1;
   border-radius: 8px;
