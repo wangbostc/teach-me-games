@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>unit preview</title>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+      }
+    }
+  </script>
+  <style>
+    body { margin: 0; background: #f6f1e7; font: 13px "IBM Plex Mono", monospace; color: #23201b; }
+    #stage { width: 100vw; height: 82vh; }
+    #labels { display: flex; }
+    #labels div { flex: 1; text-align: center; padding: 0.4rem 0; }
+    #labels small { display: block; opacity: 0.6; }
+    #err { color: #a6432f; padding: 1rem; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <!--
+    Standalone review page for one faction's roster: all six units in a row,
+    each scaled to its chess role exactly as the board scales it.
+      /static/units/preview.html?faction=castle
+    Optional: &only=k to show one unit large.
+  -->
+  <div id="stage"></div>
+  <div id="labels"></div>
+  <div id="err"></div>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+    import { RoomEnvironment } from "https://unpkg.com/three@0.160.0/examples/jsm/environments/RoomEnvironment.js";
+    import { fitToRole } from "/static/units/common.js";
+    import { stone, burnishedGold, wood } from "/static/units/materials.js";
+
+    const params = new URLSearchParams(location.search);
+    const factionName = (params.get("faction") || "castle").replace(/[^a-z]/gi, "");
+    const only = params.get("only");
+    const ORDER = ["p", "n", "b", "r", "q", "k"];
+    const ROLE_NAME = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen", k: "king" };
+
+    const stage = document.getElementById("stage");
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(stage.clientWidth, stage.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    stage.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf6f1e7);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+    const key = new THREE.DirectionalLight(0xfff3e0, 1.6);
+    key.position.set(3, 7, 4);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.camera.left = key.shadow.camera.bottom = -5;
+    key.shadow.camera.right = key.shadow.camera.top = 5;
+    key.shadow.bias = -0.0006;
+    key.shadow.normalBias = 0.02;
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xdce8ff, 0.3);
+    fill.position.set(-4, 3, -4);
+    scene.add(fill);
+
+    const camera = new THREE.PerspectiveCamera(40, stage.clientWidth / stage.clientHeight, 0.1, 100);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.maxPolarAngle = Math.PI * 0.49;
+
+    // A plank to stand them on, same wood as the board's light squares.
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(8, 0.1, 1.5), wood(0xeadcc2, 0xc9b28c, { repeat: 2, roughness: 0.55 }));
+    floor.position.y = -0.05;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    try {
+      const mod = await import(`/static/units/${factionName}.js`);
+      const roles = only ? [only] : ORDER;
+      const spacing = only ? 0 : 1.15;
+      const labels = document.getElementById("labels");
+
+      roles.forEach((role, i) => {
+        const unitKey = mod.UNITS[role];
+        const built = mod.buildUnit(unitKey);
+        fitToRole(built, role);
+        built.group.traverse((o) => {
+          if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+        });
+
+        const holder = new THREE.Group();
+        const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.1, 32), stone(mod.BASE_COLOR));
+        plinth.position.y = 0.05;
+        plinth.receiveShadow = true;
+        holder.add(plinth);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.012, 8, 40), burnishedGold(mod.ACCENT_COLOR));
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 0.1;
+        holder.add(ring);
+        built.group.position.y += 0.1; // fitToRole grounded it; lift onto the plinth
+        // Units are authored facing -z; turn them to face the camera so a
+        // review sees faces, emblems, and shield devices rather than backs.
+        built.group.rotation.y = Math.PI;
+        holder.add(built.group);
+        holder.position.x = (i - (roles.length - 1) / 2) * spacing;
+        scene.add(holder);
+
+        const label = document.createElement("div");
+        const s = built.group.scale.x.toFixed(2);
+        label.innerHTML = `<strong>${unitKey}</strong><small>${ROLE_NAME[role]} · h=${built.height.toFixed(2)} · ×${s}</small>`;
+        labels.appendChild(label);
+      });
+
+      const width = only ? 1.0 : roles.length * spacing;
+      camera.position.set(0, 0.7, width * 0.5 + 0.9);
+      controls.target.set(0, 0.42, 0);
+      controls.update();
+      window.__preview = { scene, camera, controls, renderer };
+    } catch (e) {
+      document.getElementById("err").textContent = `Failed to load faction "${factionName}":\n${e.stack || e}`;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener("resize", () => {
+      renderer.setSize(stage.clientWidth, stage.clientHeight);
+      camera.aspect = stage.clientWidth / stage.clientHeight;
+      camera.updateProjectionMatrix();
+    });
+  </script>
+</body>
+</html>
