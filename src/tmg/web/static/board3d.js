@@ -319,11 +319,12 @@ export class Board3D {
     this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
 
-    const pickables = [
-      ...Object.values(this.pieceMeshes).flatMap((group) => group.children),
-      ...Object.values(this.squareMeshes),
-    ];
-    const hits = this.raycaster.intersectObjects(pickables, false);
+    // Recursive: a piece is a plinth plus a nested Group of unit geometry, and
+    // a Group has nothing to hit. A non-recursive cast against the direct
+    // children only ever found the plinth, so clicking a unit's body did
+    // nothing -- the one interaction the whole board exists for.
+    const pickables = [...Object.values(this.pieceMeshes), ...Object.values(this.squareMeshes)];
+    const hits = this.raycaster.intersectObjects(pickables, true);
     if (!hits.length) return;
 
     let obj = hits[0].object;

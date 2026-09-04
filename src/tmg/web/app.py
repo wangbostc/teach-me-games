@@ -5,6 +5,8 @@ play_engine.py, explain.py) is pure and engine-agnostic.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import re
 import sys
 import threading
 import time
@@ -16,7 +18,7 @@ import chess
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -61,8 +63,59 @@ async def _lifespan(app: FastAPI):
         _close_engines()
 
 
+def _static_version() -> str:
+    """A short hash over every static file's contents.
+
+    The frontend is a graph of ES modules, and browsers cache module scripts
+    aggressively: after editing board3d.js, both the current tab AND a brand
+    new one kept running the old code while the server served the new file.
+    Cache headers alone did not dislodge an entry cached before they were
+    added. So every internal module URL carries this version (see
+    _stamp_module_urls): edit any file and every URL changes, which no cache
+    can serve stale. Recomputed per request -- this is a local dev tool and
+    hashing a dozen small files is far cheaper than a confused developer.
+    """
+    digest = hashlib.sha1()
+    for path in sorted(_STATIC_DIR.rglob("*")):
+        if path.is_file():
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:10]
+
+
+_MODULE_URL_RE = re.compile(r'(["\'])(/static/[^"\']+\.(?:js|css))\1')
+
+
+def _stamp_module_urls(text: str, version: str) -> str:
+    """Append ?v=<version> to every /static/*.js|css URL in a source text."""
+    return _MODULE_URL_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}?v={version}{m.group(1)}", text)
+
+
+class _VersionedStaticFiles(StaticFiles):
+    """Serves static files with module URLs stamped and caching disabled.
+
+    Stamping happens inside the served JS/HTML too, not only in index.html:
+    app.js imports board3d.js, which imports units/*.js, and a stale module
+    anywhere down that chain is the same bug.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store"
+        if path.endswith((".js", ".html")) and getattr(response, "path", None):
+            text = Path(response.path).read_text(encoding="utf-8")
+            media_type = "text/javascript" if path.endswith(".js") else "text/html"
+            return _NoStore(_stamp_module_urls(text, _static_version()), media_type=media_type)
+        return response
+
+
+class _NoStore(HTMLResponse):
+    def __init__(self, content: str, media_type: str) -> None:
+        super().__init__(content=content, media_type=media_type)
+        self.headers["Cache-Control"] = "no-store"
+
+
 app = FastAPI(lifespan=_lifespan)
-app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+app.mount("/static", _VersionedStaticFiles(directory=_STATIC_DIR), name="static")
 
 
 @app.exception_handler(RequestValidationError)
@@ -267,8 +320,9 @@ def get_report() -> dict:
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(_STATIC_DIR / "index.html")
+def index() -> HTMLResponse:
+    html = (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    return _NoStore(_stamp_module_urls(html, _static_version()), media_type="text/html")
 
 
 def _wait_until_serving(server: uvicorn.Server, timeout: float = 10.0) -> bool:
