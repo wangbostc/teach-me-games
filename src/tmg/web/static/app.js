@@ -1,6 +1,6 @@
 "use strict";
 
-import { Board3D } from "/static/board3d.js";
+import { Board3D, FACTION_KEYS, factionLabel } from "/static/board3d.js";
 
 let board3d = null;
 let learningMode = false;
@@ -132,10 +132,39 @@ function playMove(uci) {
   });
 }
 
+function populateFactionSelect() {
+  const select = document.getElementById("faction");
+  FACTION_KEYS.forEach((key) => {
+    const option = document.createElement("option");
+    option.value = key;
+    option.textContent = factionLabel(key);
+    select.appendChild(option);
+  });
+}
+
+// The opponent's army is always a DIFFERENT one from the player's own --
+// picked at random from the remaining eight, never chosen by the player for
+// both sides.
+function pickOpponentFaction(userFaction) {
+  const others = FACTION_KEYS.filter((key) => key !== userFaction);
+  return others[Math.floor(Math.random() * others.length)];
+}
+
+function showMatchup(userFaction, opponentFaction) {
+  document.getElementById("matchup").textContent =
+    "You: " + factionLabel(userFaction) + "  vs.  Opponent: " + factionLabel(opponentFaction);
+}
+
 function startGame() {
   userColor = document.getElementById("side").value;
   const difficulty = document.getElementById("difficulty").value;
   learningMode = document.getElementById("learning-mode").checked;
+  const userFaction = document.getElementById("faction").value;
+  const opponentFaction = pickOpponentFaction(userFaction);
+  const factions =
+    userColor === "white"
+      ? { w: userFaction, b: opponentFaction }
+      : { w: opponentFaction, b: userFaction };
 
   apiPost("/api/game", {
     side: userColor,
@@ -148,12 +177,14 @@ function startGame() {
     }
     document.getElementById("setup").hidden = true;
     document.getElementById("game").hidden = false;
+    showMatchup(userFaction, opponentFaction);
 
     lastKnownFen = data.fen;
     if (board3d) board3d.dispose();
     board3d = new Board3D(document.getElementById("board3d"), {
       orientation: userColor,
       onMove: playMove,
+      factions: factions,
     });
     board3d.setPosition(data.fen);
     board3d.setInteractive(!learningMode);
@@ -165,5 +196,6 @@ function startGame() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  populateFactionSelect();
   document.getElementById("start").addEventListener("click", startGame);
 });

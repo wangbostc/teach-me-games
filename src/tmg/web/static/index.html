@@ -44,7 +44,14 @@
             <option value="hard">Hard</option>
           </select>
         </label>
+        <label class="field">
+          <span>Your army</span>
+          <select id="faction"></select>
+        </label>
       </div>
+      <p class="field-note">
+        The opponent always fields a different army, picked at random.
+      </p>
       <label class="checkbox-field">
         <input type="checkbox" id="learning-mode" />
         <span
@@ -57,6 +64,7 @@
 
     <section id="game" class="game-layout" hidden>
       <div class="board-column">
+        <p id="matchup" class="matchup-line"></p>
         <div id="board3d" class="board-stage"></div>
         <p id="status" class="status-line"></p>
       </div>
