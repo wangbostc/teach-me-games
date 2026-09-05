@@ -35,6 +35,25 @@ function showStartError(message) {
   el.textContent = message;
 }
 
+// Commit a344cf9 gave game-start failures a visible message (showStartError
+// above); the move path -- hit every turn a move is attempted -- never got
+// the same treatment. A rejected move used to revert the board in total
+// silence: no message, no console output (finding 6).
+function showMoveError(message) {
+  let el = document.getElementById("move-error");
+  if (!el) {
+    el = document.createElement("p");
+    el.id = "move-error";
+    document.getElementById("status").insertAdjacentElement("afterend", el);
+  }
+  el.textContent = message;
+}
+
+function clearMoveError() {
+  const el = document.getElementById("move-error");
+  if (el) el.textContent = "";
+}
+
 function maybeFetchReport(gameOver) {
   if (!gameOver) return;
   apiGet("/api/game/report").then(({ ok, data }) => {
@@ -65,8 +84,17 @@ function renderOptions() {
   // several seconds (it's validated server-side before it's ever sent
   // here), so it must never hold up the struct the learner is waiting on.
   apiGet("/api/game/options").then(({ ok, data }) => {
-    if (!ok || requestId !== optionsRequestId) return;
+    if (requestId !== optionsRequestId) return; // a newer turn already took over
     const container = document.getElementById("options");
+    if (!ok) {
+      // The position moved on (or the game just ended) since this call was
+      // made -- the cards on screen, if any, describe a turn that's over.
+      // Clear them instead of leaving stale, still-clickable cards up
+      // (finding 6); playMove's failure path is the caller that needs this.
+      container.hidden = true;
+      container.innerHTML = "";
+      return;
+    }
     container.hidden = false;
     container.innerHTML = "";
     const cardsByUci = {};
@@ -126,8 +154,16 @@ function playMove(uci) {
   apiPost("/api/game/move", { uci: uci }).then(({ ok, data }) => {
     if (!ok) {
       board3d.setPosition(lastKnownFen);
+      showMoveError(data.detail || "That move was rejected.");
+      // The cards on screen were built for the position before this
+      // attempt; refresh them so a stale one doesn't sit there clickable
+      // (finding 6) -- renderOptions() clears the container outright if
+      // the position has since moved on (e.g. the game ended underneath
+      // this request).
+      if (learningMode) renderOptions();
       return;
     }
+    clearMoveError();
     afterMove(data);
   });
 }
@@ -178,6 +214,7 @@ function startGame() {
     document.getElementById("setup").hidden = true;
     document.getElementById("game").hidden = false;
     showMatchup(userFaction, opponentFaction);
+    clearMoveError();
 
     lastKnownFen = data.fen;
     if (board3d) board3d.dispose();

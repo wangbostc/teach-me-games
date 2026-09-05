@@ -254,6 +254,14 @@ main {
   color: var(--felt);
 }
 
+/* A rejected move (finding 6) -- same treatment as #start-error, just
+   inserted beside the board instead of the setup form. */
+#move-error {
+  color: var(--brick);
+  font-size: 0.9rem;
+  margin: 0.4rem 0 0;
+}
+
 /* Lives in the header row, pushed to the right, so it costs the board no
    vertical space. */
 .matchup-line {
