@@ -132,6 +132,42 @@ export function parseFenPlacement(fen) {
   return board;
 }
 
+// Same piece, same side -- two `undefined`s (both squares empty) count as
+// equal too. The only thing _syncPieceMeshes cares about per square.
+function _sameOccupant(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.type === b.type && a.color === b.color;
+}
+
+// Every square whose occupant differs between two parsed board states --
+// added, removed, or replaced (a capture, a promotion, one side of a
+// castle, the captured pawn's square in an en passant). An ordinary move
+// touches exactly two squares; this is what lets _syncPieceMeshes rebuild
+// only those instead of every mesh on the board (finding 2). Exported so
+// tests/web can exercise the diff directly, and so a caller wanting to
+// know "did anything change" doesn't have to instantiate a Board3D to ask.
+export function diffOccupiedSquares(prevState, nextState) {
+  const squares = new Set([...Object.keys(prevState), ...Object.keys(nextState)]);
+  const changed = [];
+  for (const square of squares) {
+    if (!_sameOccupant(prevState[square], nextState[square])) changed.push(square);
+  }
+  return changed;
+}
+
+// The UCI for a click-to-move, applying the same auto-queen promotion rule
+// _handleSquareClick always has: a pawn landing on the back rank always
+// promotes (underpromotion is a real gap -- see the review's "explicitly
+// NOT yours" note -- not something this function tries to guess at).
+// Extracted so tests/web can exercise the rule without a live Board3D.
+export function buildMoveUci(fromSquare, toSquare, movingPieceType) {
+  let uci = fromSquare + toSquare;
+  const isPromotion = movingPieceType === "p" && (toSquare[1] === "8" || toSquare[1] === "1");
+  if (isPromotion) uci += "q";
+  return uci;
+}
+
 // One piece: a plinth plus the faction's unit for this chess role, scaled by
 // fitToRole to the shared per-role height (see units/common.js). That height
 // table is what keeps the hierarchy readable across every army -- whichever
@@ -367,7 +403,10 @@ export class Board3D {
 
   setFactions(factions) {
     this.factions = factions;
-    this._syncPieceMeshes();
+    // Occupancy hasn't changed, only which army skins each side -- every
+    // piece's mesh depends on its faction, so this is the one caller that
+    // needs a full rebuild regardless of what diffOccupiedSquares would say.
+    this._rebuildAllPieceMeshes();
   }
 
   setInteractive(enabled) {
@@ -382,17 +421,18 @@ export class Board3D {
     this._clearSelection();
   }
 
+  // Disposes and rebuilds only the squares whose occupant changed since the
+  // last call -- an ordinary move touches two, a castle four, an en
+  // passant three -- instead of tearing down and rebuilding all 32 pieces
+  // on every ply (finding 2). The very first call (nothing synced yet)
+  // diffs against {}, so every occupied square is "changed": that first
+  // sync is naturally a full build.
   _syncPieceMeshes() {
-    Object.values(this.pieceMeshes).forEach((group) => {
-      this.scene.remove(group);
-      group.traverse((obj) => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) obj.material.dispose();
-      });
-    });
-    this.pieceMeshes = {};
-
-    Object.entries(this.boardState).forEach(([square, piece]) => {
+    const changedSquares = diffOccupiedSquares(this._lastSyncedState, this.boardState);
+    changedSquares.forEach((square) => {
+      this._disposePieceMesh(square);
+      const piece = this.boardState[square];
+      if (!piece) return; // the square is now empty; nothing to (re)build
       const mesh = buildPieceMesh(piece.type, this.factions[piece.color], piece.color);
       const { x, z } = squareToWorld(square);
       mesh.position.set(x, 0.1, z);
@@ -400,6 +440,27 @@ export class Board3D {
       this.scene.add(mesh);
       this.pieceMeshes[square] = mesh;
     });
+    this._lastSyncedState = this.boardState;
+  }
+
+  // A full teardown-and-rebuild of every occupied square regardless of
+  // whether the occupancy itself changed -- needed only when what a piece
+  // LOOKS like has to change (setFactions), never for an ordinary move.
+  _rebuildAllPieceMeshes() {
+    Object.keys(this.pieceMeshes).forEach((square) => this._disposePieceMesh(square));
+    this._lastSyncedState = {};
+    this._syncPieceMeshes();
+  }
+
+  _disposePieceMesh(square) {
+    const mesh = this.pieceMeshes[square];
+    if (!mesh) return;
+    this.scene.remove(mesh);
+    mesh.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) obj.material.dispose();
+    });
+    delete this.pieceMeshes[square];
   }
 
   _onClick(event) {
@@ -440,10 +501,7 @@ export class Board3D {
         return;
       }
       this._clearSelection();
-      let uci = fromSquare + square;
-      const isPromotion = fromPiece.type === "p" && (square[1] === "8" || square[1] === "1");
-      if (isPromotion) uci += "q";
-      this.onMove(uci);
+      this.onMove(buildMoveUci(fromSquare, square, fromPiece.type));
       return;
     }
 
