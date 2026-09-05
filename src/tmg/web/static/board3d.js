@@ -77,9 +77,22 @@ function squareToWorld(square) {
   return { x: (col - 3.5) * SQUARE_SIZE, z: (3.5 - row) * SQUARE_SIZE };
 }
 
-function parseFenPlacement(fen) {
+const _PIECE_LETTER_RE = /[prnbqk]/i;
+
+// Bounded and validated: a malformed or truncated FEN used to overflow
+// `FILES[file]` past "h" into `undefined`, producing a piece keyed
+// "undefined5" that squareToWorld then placed at NaN, and a stray
+// non-piece, non-digit character (e.g. a typo'd "9") fell straight through
+// to the piece branch and got recorded as a piece of that literal letter --
+// both silent failures one level up from what check_units.mjs already
+// guards against for unit geometry (finding 10). Every failure mode here
+// throws instead: a bad FEN is a caller bug, not a rendering decision.
+export function parseFenPlacement(fen) {
   const placement = fen.split(" ")[0];
   const ranks = placement.split("/"); // rank 8 first, as FEN always is
+  if (ranks.length !== 8) {
+    throw new Error(`parseFenPlacement: expected 8 ranks, got ${ranks.length} (${JSON.stringify(placement)})`);
+  }
   const board = {};
   ranks.forEach((rankStr, i) => {
     const rank = 8 - i;
@@ -89,11 +102,20 @@ function parseFenPlacement(fen) {
         file += parseInt(ch, 10);
         continue;
       }
+      if (!_PIECE_LETTER_RE.test(ch)) {
+        throw new Error(`parseFenPlacement: rank ${rank} has an unrecognized character ${JSON.stringify(ch)} (${JSON.stringify(rankStr)})`);
+      }
+      if (file >= 8) {
+        throw new Error(`parseFenPlacement: rank ${rank} overflows past the h-file (${JSON.stringify(rankStr)})`);
+      }
       board[FILES[file] + rank] = {
         type: ch.toLowerCase(),
         color: ch === ch.toUpperCase() ? "w" : "b",
       };
       file += 1;
+    }
+    if (file !== 8) {
+      throw new Error(`parseFenPlacement: rank ${rank} covers ${file} square(s), not 8 (${JSON.stringify(rankStr)})`);
     }
   });
   return board;
@@ -106,7 +128,18 @@ function parseFenPlacement(fen) {
 // the pawn, so the board can be read by silhouette before a learner knows
 // any one army's units.
 function buildPieceMesh(type, factionKey, color) {
-  const faction = FACTIONS[factionKey] || FACTIONS.castle;
+  const faction = FACTIONS[factionKey];
+  if (!faction) {
+    // Silently rendering Castle for an unrecognized key used to leave the
+    // matchup line (app.js's showMatchup) announcing the army the user
+    // actually picked while the board showed a different one -- text and
+    // pieces actively disagreeing, with nothing to say why (finding 11).
+    // A bad faction key is a caller bug (app.js only ever passes
+    // FACTION_KEYS-derived strings), so fail loudly instead.
+    throw new Error(
+      `buildPieceMesh: unknown faction key ${JSON.stringify(factionKey)} (expected one of ${FACTION_KEYS.join(", ")})`
+    );
+  }
   const mod = faction.mod;
 
   // A stone plinth, ringed in the army's accent metal. Its colour is the
