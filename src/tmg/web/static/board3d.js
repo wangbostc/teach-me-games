@@ -19,8 +19,13 @@
 // illegal attempt is submitted, the server rejects it, and the caller reverts
 // the board via a fresh setPosition(lastKnownFen).
 import * as THREE from "three";
-import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
-import { RoomEnvironment } from "https://unpkg.com/three@0.160.0/examples/jsm/environments/RoomEnvironment.js";
+// Bare specifiers resolved through the "three/addons/" entry in index.html's
+// importmap -- the SAME pin that resolves "three" itself. A hardcoded
+// absolute unpkg URL here used to duplicate that pin; bump one without the
+// other and the page loads two separate copies of three.js, which fails in
+// ways that are very hard to diagnose (see index.html's importmap comment).
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import * as castle from "/static/units/castle.js";
 import * as rampart from "/static/units/rampart.js";
 import * as tower from "/static/units/tower.js";
