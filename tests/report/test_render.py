@@ -6,19 +6,24 @@ from tmg.report.model import GameReport, MoveReport
 from tmg.report.render import describe_uci, render_text
 
 
-def _report(**overrides) -> GameReport:
-    move = MoveReport(
+def _move(**overrides) -> MoveReport:
+    """A single blundered move. Same defaults as _report's, overridable."""
+    base = dict(
         ply=0, move_number=1, color="white", uci="e1e5", san="Re5",
         phase=Phase.MIDDLEGAME, prev_cp=0, prev_mate=None, cur_cp=-400, cur_mate=None,
-        judgement=Judgement.BLUNDER, best_uci="e1e4",
+        judgement=Judgement.BLUNDER, best_uci="e1e4", best_san="Re4",
         concepts=("hangingPiece", "rookEndgame"),
         violations=(Violation("piece_left_en_prise", "Your rook on e5 can be captured."),),
     )
-    return GameReport(
-        white="me", black="maia1100", result="0-1", moves=(move,),
+    return MoveReport(**{**base, **overrides})
+
+
+def _report(**overrides) -> GameReport:
+    base = dict(
+        white="me", black="maia1100", result="0-1", moves=(_move(),),
         engine_id=EngineId("Stockfish 18", "nn-test", 1), nodes=1_000_000,
-        **overrides,
     )
+    return GameReport(**{**base, **overrides})
 
 
 def test_default_output_uses_square_names_not_san():
@@ -123,6 +128,22 @@ def test_describe_uci_castling_mentions_the_rook():
     )
 
 
+def test_describe_uci_castling_handles_the_chess960_king_takes_rook_form():
+    # REGRESSION: python-chess emits Chess960 castling as king-takes-rook
+    # ("g1h1"). A lookup table keyed on the four standard UCIs missed those
+    # and fell through to "g1 to h1" -- naming the ROOK's square as the king's
+    # destination. The CLI refuses 960 today (the vendored tagger cannot
+    # handle it), so this is a standing guard on describe_uci itself, which
+    # has no such restriction: the destinations are the same in Chess960 --
+    # king to g/c, rook to f/d.
+    assert describe_uci("g1h1", is_castling=True) == (
+        "castling kingside (king to g1, rook to f1)"
+    )
+    assert describe_uci("b8a8", is_castling=True) == (
+        "castling queenside (king to c8, rook to d8)"
+    )
+
+
 def test_describe_uci_does_not_infer_castling_from_squares_alone():
     # e1g1 is ALSO the UCI for a queen or rook sliding from e1 to g1 -- that
     # is not a castle. is_castling must come from the caller (SAN), never be
@@ -174,3 +195,43 @@ def test_concept_line_is_omitted_when_only_noise_tags_remain():
         engine_id=EngineId("Stockfish 18", "nn-test", 1), nodes=1_000_000,
     )
     assert "concept:" not in render_text(report)
+
+
+def test_the_move_you_played_is_never_recommended_back_to_you():
+    # REGRESSION: the baseline (MultiPV) search and the played-move
+    # (searchmoves) search are separate searches, so the engine's own top
+    # choice can still carry a judgement. That used to render as
+    # "better was <the move you just played>".
+    out = render_text(_report(moves=(_move(uci="e1e5", san="Re5", best_uci="e1e5"),)))
+    assert "better was" not in out
+
+
+def _better_line(out: str) -> str:
+    return next(line for line in out.splitlines() if "better was" in line)
+
+
+def test_a_recommended_castle_mentions_the_rook():
+    # describe_uci must not infer castling from the squares, so the
+    # recommendation carries its own SAN. Without best_san this printed a bare
+    # "e1 to g1" and dropped the rook -- the same defect already fixed for the
+    # played move.
+    out = render_text(_report(moves=(_move(best_uci="e1g1", best_san="O-O"),)))
+    assert "rook" in _better_line(out).lower()
+    assert "better was e1 to g1" not in out
+
+
+def test_a_recommended_king_slide_is_not_described_as_a_castle():
+    # Same squares as O-O, but the SAN says it is a king move. The rook must
+    # not be mentioned.
+    out = render_text(_report(moves=(_move(best_uci="e1g1", best_san="Kg1"),)))
+    assert _better_line(out).strip() == "better was e1 to g1"
+
+
+def test_the_recommendation_uses_san_under_the_san_flag():
+    # REGRESSION: under --san the "better was" line printed raw UCI while
+    # every other move on the line was in SAN.
+    out = render_text(
+        _report(moves=(_move(best_uci="g1f3", best_san="Nf3"),)), show_san=True
+    )
+    assert "better was Nf3" in out
+    assert "g1f3" not in out

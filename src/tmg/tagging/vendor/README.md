@@ -24,6 +24,12 @@ module objects, then restored. This ensures:
   different `sys.modules` keys)
 - Full compatibility with upstream re-sync (the vendored files remain unmodified)
 
+The shim also snapshots and restores the **root logger** around the `cook`
+import: `cook.py` calls `logging.basicConfig()` at module scope, which would
+otherwise attach a handler to the root logger of whatever imports us,
+reformat every record the consuming application logs, and silently turn that
+application's own later `basicConfig()` into a no-op.
+
 When re-syncing from upstream, keep `__init__.py` and this README section — they
 are not part of the vendored code itself, but necessary integration glue.
 

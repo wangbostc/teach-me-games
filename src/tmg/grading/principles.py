@@ -121,9 +121,21 @@ def check_principles(board_before: chess.Board, move: chess.Move) -> list[Violat
         )
 
     # 3. Still uncastled past the point where it matters.
+    #
+    # Not while the mover is IN CHECK: castling out of check is illegal, so
+    # "castling is usually the most important move" is advice the learner
+    # cannot act on for the move being annotated. Worse, this rule carries
+    # `dedupe_per_game=True`, so the first firing is the ONLY firing for that
+    # colour -- a forced check evasion just past move 10 (Morphy's Opera Game,
+    # 11...Nbd7 blocking Bb5+) burned the one slot and silently suppressed
+    # 12...Rd8, where O-O-O really was available. `is_check` is the right
+    # narrowing, NOT "has no legal castling move": a king walled in by its own
+    # undeveloped bishop and knight is exactly the position this rule exists
+    # to warn about.
     if (
         not is_castling
         and move_number > CASTLE_BY_MOVE
+        and not board_before.is_check()
         and board_before.has_castling_rights(mover)
     ):
         violations.append(

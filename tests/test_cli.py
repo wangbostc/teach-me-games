@@ -1,6 +1,9 @@
-import io
+import sys
 from pathlib import Path
 
+import pytest
+
+import tmg.cli
 from tmg.cli import main
 
 PGN = """[Event "test"]
@@ -111,3 +114,745 @@ def test_cli_stays_silent_on_trailing_junk_with_no_second_game(tmp_path, capsys,
 
     assert exit_code == 0
     assert out.err == ""
+
+
+# A PGN whose player names carry the accents real player names carry. Held as
+# bytes so the fixture is exact regardless of this file's own encoding.
+UTF8_PGN_BYTES = (
+    '[Event "test"]\n'
+    '[White "Bogoljúbow"]\n'
+    '[Black "Alaékhïne"]\n'
+    '[Result "*"]\n'
+    "\n"
+    "1. e4 e5 2. Nf3 Nc6 *\n"
+).encode("utf-8")
+
+# Runs the CLI's read path in a child process so the locale can actually be
+# forced. Monkeypatching `locale` does not work: CPython's `open()` resolves
+# the default encoding in C, below anything a test can reach.
+_READ_PATH_ONLY = """
+import sys
+import tmg.cli
+
+
+class _NoEngine:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+tmg.cli.stockfish_available = lambda path="stockfish": True
+tmg.cli.StockfishAdapter = _NoEngine
+tmg.cli.analyse_game = lambda game, engine: game
+tmg.cli.render_text = lambda report, show_san=False: "ok"
+sys.exit(tmg.cli.main([sys.argv[1]]))
+"""
+
+
+def _run_under_c_locale(pgn_file: Path, script: str = _READ_PATH_ONLY):
+    import os
+    import subprocess
+
+    import tmg
+
+    # The child inherits this process's environment (see `**os.environ` below)
+    # -- but NOT pytest's `pythonpath = ["src"]`, which is applied to this
+    # process's sys.path, not to PYTHONPATH. Without prepending it the child
+    # dies with ModuleNotFoundError and the test fails for a reason that has
+    # nothing to do with locales, in every checkout where the package is not
+    # pip-installed.
+    src_dir = str(Path(tmg.__file__).resolve().parent.parent)
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            [src_dir, *filter(None, [os.environ.get("PYTHONPATH", "")])]
+        ),
+        "LC_ALL": "C",
+        "LANG": "C",
+        # Without these, CPython would quietly rescue the C locale by coercing
+        # it to UTF-8 -- and the regression would not reproduce.
+        "PYTHONUTF8": "0",
+        "PYTHONCOERCECLOCALE": "0",
+    }
+    # PYTHONIOENCODING overrides the locale for the child's std streams only.
+    # Inheriting it (Docker images and CI configs set it precisely to dodge
+    # this class of bug) gives the child a UTF-8 stdout under LC_ALL=C, and the
+    # stdout half of these tests then passes with the fix reverted -- a
+    # regression test that cannot fail. The `open()` half is unaffected by it.
+    env.pop("PYTHONIOENCODING", None)
+    return subprocess.run(
+        [sys.executable, "-c", script, str(pgn_file)],
+        capture_output=True, text=True, env=env,
+    )
+
+
+def test_cli_reads_a_utf8_pgn_under_a_non_utf8_locale(tmp_path):
+    # REGRESSION: `pgn_path.open()` used the locale's encoding, so under LANG=C
+    # -- the default in slim containers and many CI images -- a perfectly valid
+    # PGN with an accented player name exited 2 as "could not parse PGN file".
+    # With a BOM on the front too: Windows editors and some Lichess exports
+    # add one, and "utf-8-sig" is what eats it. python-chess happens to strip
+    # a stray BOM itself, so this half is belt-and-braces -- the accents are
+    # what actually reproduce the failure.
+    pgn_file = tmp_path / "accents.pgn"
+    pgn_file.write_bytes(b"\xef\xbb\xbf" + UTF8_PGN_BYTES)
+
+    result = _run_under_c_locale(pgn_file)
+
+    assert "could not parse PGN file" not in result.stderr
+    assert result.returncode == 0, result.stderr
+
+
+# Same child-process trick, but with the REAL renderer: the names read off the
+# PGN have to survive all the way to stdout, not just into the parser.
+_FULL_PATH = """
+import sys
+import tmg.cli
+from tmg.report.model import GameReport
+
+
+class _NoEngine:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+tmg.cli.stockfish_available = lambda path="stockfish": True
+tmg.cli.StockfishAdapter = _NoEngine
+tmg.cli.analyse_game = lambda game, engine: GameReport(
+    white=game.headers.get("White"), black=game.headers.get("Black"),
+    result=game.headers.get("Result"), moves=(), engine_id=None, nodes=0,
+)
+sys.exit(tmg.cli.main([sys.argv[1]]))
+"""
+
+
+def test_cli_prints_a_report_with_accented_names_under_a_non_utf8_locale(tmp_path):
+    # REGRESSION: reading the PGN as utf-8-sig fixed the input side but left the
+    # output side crashing on exactly the same file -- stdout under LANG=C is
+    # ASCII with a strict error handler, so printing the accented player name
+    # raised UnicodeEncodeError and exited 1 with a traceback. The earlier
+    # locale test could not see it: it stubs render_text out to "ok".
+    pgn_file = tmp_path / "accents.pgn"
+    pgn_file.write_bytes(UTF8_PGN_BYTES)
+
+    result = _run_under_c_locale(pgn_file, _FULL_PATH)
+
+    assert "UnicodeEncodeError" not in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert " vs " in result.stdout
+
+
+def test_cli_warns_when_the_pgn_has_a_move_it_cannot_read(tmp_path, capsys, monkeypatch):
+    # chess.pgn.read_game does not raise on an unreadable move: it records the
+    # error and stops adding moves. Without a warning the report silently covers
+    # only the first few plies and its "summary:" line reads as a verdict on the
+    # whole game.
+    _fake_success(monkeypatch)
+
+    pgn_file = tmp_path / "truncated.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n'
+        "\n1. e4 e5 2. Nf3 Nf6 3. Qxq9 Nc6 4. Bb5 a6 *\n"
+    )
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 0
+    assert "could not read" in err.lower()
+
+
+def _run_in_child(pgn_file: Path, script: str):
+    """Run `script` against `pgn_file` in a fresh interpreter, default locale.
+
+    Same PYTHONPATH plumbing as `_run_under_c_locale` and for the same reason
+    (pytest's `pythonpath = ["src"]` applies to this process's sys.path, not to
+    the child's PYTHONPATH), but without forcing a locale -- these tests are
+    about what a fresh process prints, not about how it decodes.
+    """
+    import os
+    import subprocess
+
+    import tmg
+
+    src_dir = str(Path(tmg.__file__).resolve().parent.parent)
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            [src_dir, *filter(None, [os.environ.get("PYTHONPATH", "")])]
+        ),
+    }
+    return subprocess.run(
+        [sys.executable, "-c", script, str(pgn_file)],
+        capture_output=True, text=True, env=env,
+    )
+
+
+# chess.pgn logs every unreadable token at ERROR. With no handler configured
+# anywhere, logging's lastResort prints it straight to stderr -- but ONLY in a
+# process where nothing else has claimed the root logger. pytest's logging
+# plugin does claim it, so this has to run in a child process or it is a test
+# that cannot fail.
+_PARSE_ERROR_STDERR_PROBE = """
+import sys
+import tmg.cli
+
+
+class _NoEngine:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+tmg.cli.stockfish_available = lambda path="stockfish": True
+tmg.cli.StockfishAdapter = _NoEngine
+tmg.cli.analyse_game = lambda game, engine: game
+tmg.cli.render_text = lambda report, show_san=False: "ok"
+sys.exit(tmg.cli.main([sys.argv[1]]))
+"""
+
+
+def test_python_chess_does_not_print_its_own_raw_parse_errors(tmp_path):
+    # REGRESSION: one unreadable move produced two stderr messages -- the CLI's
+    # curated "N passage(s) this parser could not read", and ahead of it
+    # chess.pgn's own "illegal san: 'Qxq9' in <fen> while parsing <Game at
+    # 0x7f... ('me' vs. 'them', ...)>", which leaks an object address no reader
+    # can act on and says nothing the warning does not.
+    pgn_file = tmp_path / "truncated.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n'
+        "\n1. e4 e5 2. Nf3 Nf6 3. Qxq9 Nc6 4. Bb5 a6 *\n"
+    )
+
+    result = _run_in_child(pgn_file, _PARSE_ERROR_STDERR_PROBE)
+
+    assert result.returncode == 0, result.stderr
+    # The CLI's own curated warning is still there...
+    assert "could not read" in result.stderr.lower()
+    # ...and python-chess's raw internal one is not.
+    assert "illegal san" not in result.stderr.lower()
+    assert "while parsing" not in result.stderr.lower()
+    assert "<Game at" not in result.stderr
+
+
+def test_the_unreadable_passage_warning_does_not_claim_a_truncation_it_cannot_see(
+    tmp_path, capsys, monkeypatch
+):
+    # `game.errors` is NOT "the game was truncated". A game-termination marker
+    # inside a variation makes chess.pgn.read_game record two errors while the
+    # mainline still parses in full -- and it is the whole mainline that gets
+    # analysed. Telling the reader we analysed "only the moves before the first
+    # of them" would be flatly false for exactly the annotated PGNs most likely
+    # to hit this.
+    seen: list[list[str]] = []
+    _fake_success(monkeypatch)
+    fake_report = tmg.cli.analyse_game(None, None)  # the stub _fake_success installed
+
+    def spy(game, engine):
+        seen.append([m.uci() for m in game.mainline_moves()])
+        return fake_report
+
+    monkeypatch.setattr("tmg.cli.analyse_game", spy)
+
+    pgn_file = tmp_path / "result_in_variation.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n'
+        "\n1. e4 e5 (1... c5 1-0) 2. Nf3 Nc6 *\n"
+    )
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 0
+    # Nothing was actually lost: all four mainline plies reached the pipeline.
+    assert seen == [["e2e4", "e7e5", "g1f3", "b8c6"]]
+    assert "only the moves before" not in err
+    assert "may be missing" in err
+
+
+def test_cli_rejects_a_pgn_containing_a_null_move(tmp_path, capsys, monkeypatch):
+    # "--" passes the turn in analysis PGNs. It parses to Move.null() and
+    # records ZERO parse errors, so the unreadable-passage warning cannot see
+    # it -- and it used to reach StockfishAdapter as `searchmoves 0000`, which
+    # returns no candidates and left main() raising RuntimeError with a
+    # traceback.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "nullmove.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n'
+        "\n1. e4 e5 2. -- Nc6 *\n"
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "null move" in err.lower()
+
+
+def test_cli_rejects_a_variant_pgn_instead_of_crashing_in_the_engine(
+    tmp_path, capsys, monkeypatch
+):
+    # A Lichess "export my games" download can hold variant games alongside
+    # standard ones. Every other guard passes for one -- the moves parse
+    # cleanly under the variant's own rules, no parse errors, no null moves --
+    # and it then died inside python-chess as
+    # `EngineError: engine does not support UCI_Variant`, a traceback on exit 1.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "atomic.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[Variant "Atomic"]\n[White "me"]\n[Black "them"]\n'
+        '[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *\n'
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "atomic" in err.lower()
+    assert "standard chess" in err.lower()
+
+
+def _explodes(*args, **kwargs):
+    raise AssertionError("the engine must not be started for a rejected PGN")
+
+
+def test_cli_rejects_a_variant_python_chess_does_not_even_know(
+    tmp_path, capsys, monkeypatch
+):
+    # REGRESSION: an unrecognised [Variant] makes chess.pgn's find_variant
+    # raise out of game.board() -- but read_game itself does NOT fail on it,
+    # it records the error and parses the moves against a standard board. So
+    # the game reached the variant guard looking analysable and the guard's
+    # own `game.board()` call raised, exiting 1 with a traceback: the exact
+    # failure the guard exists to replace.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "duck.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[Variant "Duck Chess"]\n[White "me"]\n[Black "them"]\n'
+        '[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *\n'
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "duck chess" in err.lower()
+    assert "standard chess" in err.lower()
+
+
+@pytest.mark.parametrize("flag", ["--nodes", "--multipv"])
+def test_cli_refuses_a_non_positive_search_budget(tmp_path, capsys, flag):
+    # Neither flag degrades gracefully at 0. `go nodes 0` is UCI for "no node
+    # limit", so --nodes 0 made Stockfish search forever and the CLI hung with
+    # no output and nothing to interrupt but ^C. A MultiPV below 1 leaves the
+    # baseline search with no candidates, so every move went unjudged and the
+    # report's "summary:" line announced a clean game.
+    pgn_file = tmp_path / "game.pgn"
+    pgn_file.write_text(PGN)
+
+    with pytest.raises(SystemExit) as exc:
+        main([str(pgn_file), flag, "0"])
+
+    assert exc.value.code == 2
+    assert "1 or greater" in capsys.readouterr().err
+
+
+def test_cli_rejects_chess960(tmp_path, capsys, monkeypatch):
+    # The ENGINE handles 960 fine; the vendored concept tagger does not, in
+    # three independent ways (see the guard's comment in cli.py). Two of them
+    # produce confidently wrong teaching content rather than crashing, which is
+    # the worse failure -- so 960 is refused at the boundary until the
+    # detectors are forked.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "chess960.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[Variant "Chess960"]\n[White "me"]\n[Black "them"]\n'
+        '[Result "*"]\n[FEN "bqnbnrkr/pppppppp/8/8/8/8/PPPPPPPP/BQNBNRKR w HFhf - 0 1"]\n'
+        "\n1. g3 g6 *\n"
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "chess960" in err.lower()
+    assert "standard chess" in err.lower()
+
+
+def test_cli_rejects_an_unreadable_file_without_a_traceback(tmp_path, capsys, monkeypatch):
+    # is_file() says the path exists and is a regular file; it does NOT say
+    # this process can read it. Only UnicodeDecodeError was handled, so a
+    # permission-denied PGN escaped main() as a traceback on exit 1 instead of
+    # the exit-2-with-a-message contract every other rejection here honours.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    pgn_file = tmp_path / "unreadable.pgn"
+    pgn_file.write_text(PGN)
+
+    real_open = Path.open
+
+    def refuse(self, *args, **kwargs):
+        if self == pgn_file:
+            raise PermissionError(13, "Permission denied")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", refuse)
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "could not read" in err.lower()
+
+
+def test_no_parse_warning_is_printed_for_a_pgn_that_is_then_rejected(
+    tmp_path, capsys, monkeypatch
+):
+    # An unrecognised [Variant] lands in game.errors too, so the
+    # unreadable-passage warning used to fire just before the variant guard
+    # rejected the file -- blaming move parsing for a header problem, and
+    # warning about "this report" when no report is ever produced. Both
+    # warnings now come after every guard that can still refuse the file.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "duck.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[Variant "Duck Chess"]\n[White "me"]\n[Black "them"]\n'
+        '[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *\n'
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "may be missing from this report" not in err
+    assert "duck chess" in err.lower()
+
+
+def test_cli_reports_an_engine_refusal_without_a_traceback(tmp_path, capsys, monkeypatch):
+    # The guards cover the inputs we can recognise ourselves; the engine can
+    # still refuse a run for reasons only it knows. `--multipv 600` is over
+    # Stockfish's MultiPV max of 500 and python-chess raises rather than
+    # clamping, so this exited 1 with a traceback -- after the subprocess had
+    # already been started. EngineTerminatedError (a mid-game engine crash)
+    # subclasses EngineError and takes the same path.
+    import chess.engine
+
+    def _refuses(**kwargs):
+        raise chess.engine.EngineError(
+            "expected value for option 'MultiPV' to be at most 500, got: 600"
+        )
+
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _refuses)
+    pgn_file = tmp_path / "game.pgn"
+    pgn_file.write_text(PGN)
+
+    exit_code = main([str(pgn_file), "--multipv", "600"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "at most 500" in err
+
+
+def test_cli_reads_a_latin1_pgn_the_pgn_standard_specifies(tmp_path, capsys, monkeypatch):
+    # REGRESSION: the read path was strict UTF-8, but the PGN standard
+    # (section 4.1) specifies ISO-8859-1, and the desktop tools that predate
+    # Lichess still emit it. "Bogoljubow" with its accent is a single 0xFA
+    # byte there -- not valid UTF-8 -- so a perfectly conformant PGN was
+    # refused outright as "could not parse PGN file".
+    _fake_success(monkeypatch)
+
+    pgn_file = tmp_path / "latin1.pgn"
+    pgn_file.write_bytes(
+        '[Event "test"]\n[White "Bogolj\u00fabow"]\n[Black "Alekhine"]\n'
+        '[Result "1-0"]\n\n1. e4 e5 1-0\n'.encode("latin-1")
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 0, err
+    assert "could not parse" not in err.lower()
+
+
+def test_a_binary_file_is_still_rejected_and_not_rescued_by_the_latin1_retry(
+    tmp_path, capsys, monkeypatch
+):
+    # latin-1 decodes ANY byte string, so the retry can never fail on its own.
+    # Accepting it unconditionally would turn binary garbage into a silent
+    # zero-move "game"; it is only taken when it actually yields moves.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    pgn_file = tmp_path / "binary.pgn"
+    pgn_file.write_bytes(b"\xff\xfe\x00\x01binary garbage \x80\x81\x82")
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "could not parse" in err.lower()
+
+
+def test_chess960_from_a_fen_alone_is_named_chess960_not_chess(tmp_path, capsys, monkeypatch):
+    # REGRESSION: a 960 position can arrive with no [Variant] header at all --
+    # python-chess infers it from the castling rights in the FEN. The guard
+    # fired correctly but built its message from the header, so it read
+    # "is a chess game; tmg only analyses standard chess": self-contradictory,
+    # and nothing the reader can act on.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "headerless960.pgn"
+    pgn_file.write_text(
+        '[Event "test"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n'
+        '[FEN "bqnbnrkr/pppppppp/8/8/8/8/PPPPPPPP/BQNBNRKR w HFhf - 0 1"]\n'
+        "\n1. g3 g6 *\n"
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "chess960" in err.lower()
+    assert "is a chess game" not in err.lower()
+
+
+def test_a_leading_aborted_game_is_not_reported_as_no_game_found(tmp_path, capsys, monkeypatch):
+    # An "export my games" download can lead with an aborted game (0 moves).
+    # "no game found" is flatly wrong for a file that holds several playable
+    # ones, and leaves the reader with nothing to do about it.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+    pgn_file = tmp_path / "aborted_first.pgn"
+    pgn_file.write_text(
+        '[Event "aborted"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n\n*\n\n'
+        + PGN
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "no game found" not in err.lower()
+    assert "has no moves" in err.lower()
+
+
+def test_analyse_move_with_no_engine_line_raises_an_engine_error(monkeypatch):
+    # REGRESSION: a bare RuntimeError walked straight through main()'s
+    # `except chess.engine.EngineError`, ending the run on a traceback and
+    # exit 1 instead of the exit-2-with-a-message contract.
+    import chess
+    import chess.engine
+
+    from tmg.engine.stockfish import StockfishAdapter
+
+    class _SilentEngine:
+        def analyse(self, board, limit, **kwargs):
+            return [{}]  # what python-chess returns when no info line arrived
+
+    adapter = StockfishAdapter()
+    adapter._engine = _SilentEngine()
+
+    with pytest.raises(chess.engine.EngineError, match="no line for"):
+        adapter.analyse_move(chess.Board(), chess.Move.from_uci("e2e4"))
+
+
+def test_cli_reports_a_non_uci_engine_binary_without_a_traceback(
+    tmp_path, capsys, monkeypatch
+):
+    # REGRESSION: stockfish_available() only proves the --engine path resolves
+    # to an executable file. Point it at a program that is not a UCI engine (a
+    # wrapper script, a mistyped path that happens to hit another binary,
+    # /bin/cat) and SimpleEngine.popen_uci spawns it, waits out its 10-second
+    # UCI handshake, and raises TimeoutError -- an OSError subclass, NOT a
+    # chess.engine.EngineError -- so it walked straight through main()'s
+    # handler and ended the run on a traceback at exit 1. An exec failure (bad
+    # shebang, wrong architecture) is a plain OSError and did the same.
+    def _times_out(**kwargs):
+        raise TimeoutError()  # str() is empty, like the real one
+
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _times_out)
+    pgn_file = tmp_path / "game.pgn"
+    pgn_file.write_text(PGN)
+
+    exit_code = main([str(pgn_file), "--engine", "/bin/cat"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    # An empty str(exc) must not render as "could not run this analysis: ".
+    assert "TimeoutError" in err
+    assert "/bin/cat" in err
+
+
+def test_the_missing_engine_message_names_the_path_that_was_tried(tmp_path, capsys):
+    # A fixed "or pass --engine /path/to/stockfish" is useless advice for the
+    # user who already passed --engine and got the path wrong: it neither says
+    # which path failed nor acknowledges the flag they used.
+    pgn_file = tmp_path / "game.pgn"
+    pgn_file.write_text(PGN)
+
+    exit_code = main([str(pgn_file), "--engine", "/opt/nope/stockfish"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "/opt/nope/stockfish" in err
+
+
+ABORTED_PGN = '[Event "aborted"]\n[White "me"]\n[Black "them"]\n[Result "*"]\n\n*\n\n'
+
+
+def test_an_aborted_game_between_two_real_ones_still_warns_about_the_rest(
+    tmp_path, capsys, monkeypatch
+):
+    # REGRESSION: the peek stopped at the very next game and required THAT one
+    # to have moves. An "export my games" download interleaves aborted (0-move)
+    # games freely, so `real, aborted, real` looked like a single-game file:
+    # the third game was silently dropped with no warning anywhere -- exactly
+    # the trap the multi-game warning exists to close.
+    _fake_success(monkeypatch)
+
+    pgn_file = tmp_path / "real_aborted_real.pgn"
+    pgn_file.write_text(PGN + "\n" + ABORTED_PGN + PGN)
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 0
+    assert "more than one game" in err.lower()
+
+
+def test_two_leading_aborted_games_do_not_read_as_no_game_found(
+    tmp_path, capsys, monkeypatch
+):
+    # The other half of the same defect: a download can lead with more than one
+    # aborted game, and peeking exactly one game ahead put the file straight
+    # back on "no game found" -- flatly wrong for a file that holds a playable
+    # game -- undoing the message the single-aborted-game case already fixed.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+
+    pgn_file = tmp_path / "two_aborted_first.pgn"
+    pgn_file.write_text(ABORTED_PGN + ABORTED_PGN + PGN)
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "no game found" not in err.lower()
+    assert "has no moves" in err.lower()
+
+
+def test_an_unreadable_file_error_with_no_message_still_names_the_failure(
+    tmp_path, capsys, monkeypatch
+):
+    # An OSError can arrive with neither an errno nor a message -- a bare
+    # TimeoutError off a stalled network mount is one, and it is an OSError
+    # subclass. `exc.strerror or exc` then rendered as nothing at all:
+    # "error: could not read PGN file: game.pgn: ". The engine handler further
+    # down already defends against exactly this; the read path must too.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    pgn_file = tmp_path / "stalled.pgn"
+    pgn_file.write_text(PGN)
+
+    real_open = Path.open
+
+    def stalls(self, *args, **kwargs):
+        if self == pgn_file:
+            raise TimeoutError()  # no errno, no strerror, empty str()
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", stalls)
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "traceback" not in err.lower()
+    assert "TimeoutError" in err
+    assert not err.rstrip("\n").endswith(":")
+
+
+def test_a_latin1_pgn_that_leads_with_an_aborted_game_is_not_called_unparseable(
+    tmp_path, capsys, monkeypatch
+):
+    # REGRESSION: the latin-1 retry re-raised whenever the FIRST game had no
+    # moves, a guard aimed at binary files. An ISO-8859-1 "export my games"
+    # download that leads with an aborted (0-move) game hit it too, so a file
+    # tmg had just parsed in full came out as "could not parse PGN file" --
+    # undoing the aborted-first-game message for exactly the encoding the PGN
+    # standard specifies. The peek counts as evidence the file is readable;
+    # binary garbage yields no peeked game either, so it is still rejected.
+    monkeypatch.setattr("tmg.cli.stockfish_available", lambda path="stockfish": True)
+    monkeypatch.setattr("tmg.cli.StockfishAdapter", _explodes)
+
+    pgn_file = tmp_path / "latin1_aborted_first.pgn"
+    pgn_file.write_bytes(
+        (
+            '[Event "aborted"]\n[White "Bogoljúbow"]\n[Black "them"]\n'
+            '[Result "*"]\n\n*\n\n'
+            '[Event "test"]\n[White "Bogoljúbow"]\n[Black "them"]\n'
+            '[Result "*"]\n\n1. e4 e5 *\n'
+        ).encode("latin-1")
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "could not parse" not in err.lower()
+    assert "has no moves" in err.lower()
+
+
+def test_a_multi_game_pgn_warns_even_when_only_the_peek_fails_to_decode(
+    tmp_path, capsys, monkeypatch
+):
+    # REGRESSION: a UnicodeDecodeError raised while PEEKING was downgraded to
+    # "no more games" without ever trying the latin-1 fallback, so a two-game
+    # non-UTF-8 PGN was analysed with an empty stderr -- the silent drop the
+    # multi-game warning exists to prevent. Whether the user got the warning
+    # depended only on where the 8 KiB read-ahead boundary fell: move the bad
+    # byte a few hundred bytes earlier and the error surfaces during the FIRST
+    # read, where the latin-1 retry already rescued the whole file. Game 1
+    # here is pure ASCII and game 2's bad byte sits a full chunk past it.
+    _fake_success(monkeypatch)
+
+    pgn_file = tmp_path / "peek_only_latin1.pgn"
+    padding = "x" * 40_000
+    pgn_file.write_bytes(
+        (
+            PGN
+            + "\n"
+            + '[Event "second"]\n[White "them"]\n[Black "me"]\n[Result "*"]\n'
+            + f"\n1. d4 {{{padding} Bogoljúbow}} d5 *\n"
+        ).encode("latin-1")
+    )
+
+    exit_code = main([str(pgn_file)])
+    err = capsys.readouterr().err
+
+    assert exit_code == 0
+    assert "more than one game" in err.lower()

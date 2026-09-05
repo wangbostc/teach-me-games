@@ -7,6 +7,7 @@ import pytest
 from tmg.engine.protocol import Analysis, Candidate, EngineId
 from tmg.engine.stockfish import StockfishAdapter, stockfish_available
 from tmg.grading.classify import Judgement
+import tmg.pipeline
 from tmg.pipeline import CORROBORATION_MIN_CP_DROP, analyse_game
 
 ENGINE_ID = EngineId(name="Fake 1", net_hash="nn-test", threads=1)
@@ -21,7 +22,6 @@ class ScriptedEngine:
 
     def __init__(self, cps_by_ply):
         self._cps = cps_by_ply
-        self._calls = 0
 
     def _cp_for(self, key):
         return self._cps.get(key, 0)
@@ -399,3 +399,94 @@ def test_a_genuine_hanging_knight_is_still_flagged_and_judged_a_blunder():
     assert nxe5.uci == "f3e5"
     assert nxe5.judgement == Judgement.BLUNDER
     assert "piece_left_en_prise" in [v.rule for v in nxe5.violations]
+
+
+class _EvenRefutationEngine:
+    """analyse_move returns pv = [played, punisher, blunderer's reply], i.e. a
+    refutation of EVEN length. cook.py's detectors all assume the puzzle line
+    ends on the punisher's move, so the pipeline must trim the trailing ply.
+    """
+
+    def analyse(self, board):
+        return Analysis(
+            candidates=(Candidate(0, next(iter(board.legal_moves)).uci(), 0, None, ()),),
+            side_to_move="white" if board.turn == chess.WHITE else "black",
+            nodes=1,
+            engine_id=ENGINE_ID,
+        )
+
+    def analyse_move(self, board, move):
+        return Candidate(0, move.uci(), -500, None, (move.uci(), "e8e5", "g1f1"))
+
+
+def test_an_even_length_refutation_is_trimmed_to_end_on_the_punishers_move(monkeypatch):
+    # [played, *refutation] is the mainline handed to cook.py. It must have an
+    # even length -- the blunderer moves, the punisher answers -- so the
+    # refutation itself must have an ODD number of plies. An even one ends the
+    # line on the blunderer's own reply, which makes defensive_move read that
+    # quiet reply as a punishing move and tag it "defensiveMove".
+    seen: list[list[str]] = []
+    real = tmg.pipeline.tag_self_blunder
+
+    def spy(fen_before, played_uci, refutation_ucis, cp_after, puzzle_id="self"):
+        seen.append(list(refutation_ucis))
+        return real(fen_before, played_uci, refutation_ucis, cp_after, puzzle_id)
+
+    monkeypatch.setattr(tmg.pipeline, "tag_self_blunder", spy)
+
+    board = chess.Board("4r1k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1")
+    game = chess.pgn.Game.from_board(board)
+    game.add_main_variation(chess.Move.from_uci("e1e5"))
+
+    analyse_game(game, _EvenRefutationEngine())
+
+    assert seen, "tag_self_blunder was never reached"
+    assert seen[0] == ["e8e5"], "the blunderer's own reply must be trimmed off"
+    assert len(seen[0]) % 2 == 1
+
+
+class _BestMoveIsTheBlunderEngine:
+    """The baseline names e2e4 as best at cp 0; analyse_move would score that
+    SAME move -60 -- an Inaccuracy the position does not contain. Two searches
+    of one move at the same node budget legitimately differ; the pipeline must
+    not let that difference become a judgement against the engine's own pick.
+    """
+
+    def __init__(self):
+        self.analyse_move_calls = 0
+
+    def analyse(self, board):
+        return Analysis(
+            candidates=(Candidate(0, "e2e4", 0, None, ("e2e4",)),),
+            side_to_move="white",
+            nodes=1,
+            engine_id=ENGINE_ID,
+        )
+
+    def analyse_move(self, board, move):
+        self.analyse_move_calls += 1
+        return Candidate(0, move.uci(), -60, None, (move.uci(),))
+
+
+def test_playing_the_engines_own_best_move_is_never_judged():
+    game = _game("1. e4 *")
+    engine = _BestMoveIsTheBlunderEngine()
+
+    report = analyse_game(game, engine)
+
+    move = report.moves[0]
+    assert move.judgement is None
+    assert move.prev_cp == move.cur_cp == 0
+    # Reusing the baseline candidate is also one fewer search per such ply.
+    assert engine.analyse_move_calls == 0
+
+
+def test_the_recommended_move_carries_its_san_for_the_renderer():
+    game = _game("1. e4 *")
+    report = analyse_game(game, ScriptedEngine({("before", 0): 0, ("played", 0): -169}))
+    move = report.moves[0]
+    # ScriptedEngine's baseline picks the first legal move in the start
+    # position, g1h3. The renderer needs SAN to tell a castle from a king
+    # slide, and cannot derive it once the board has moved on.
+    assert move.best_uci == "g1h3"
+    assert move.best_san == "Nh3"

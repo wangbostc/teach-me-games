@@ -1,7 +1,7 @@
 """Typed results. Everything the renderer prints comes from here -- and in M2,
 everything the LLM is allowed to talk about comes from here too.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from tmg.engine.protocol import EngineId
 from tmg.grading.classify import Judgement
@@ -23,6 +23,10 @@ class MoveReport:
     cur_mate: int | None
     judgement: Judgement | None
     best_uci: str | None
+    # SAN of best_uci: shown verbatim under --san, and the ONLY way the
+    # renderer can tell a recommended castle from a king slide (the squares
+    # alone cannot -- see report/render.py).
+    best_san: str | None = None
     concepts: tuple[str, ...] = ()
     violations: tuple[Violation, ...] = ()
 

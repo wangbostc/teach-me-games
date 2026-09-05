@@ -14,11 +14,12 @@ _LABEL = {
 
 # Concept tags that are puzzle-database bookkeeping rather than a chess motif a
 # beginner can learn from: the outcome category ("goal"), the solution length,
-# and the game phase (already shown separately, or -- for the *Endgame piece
-# variants -- carrying no teaching value on their own). Named motifs and mate
-# patterns (hangingPiece, fork, backRankMate, mateIn1, ...) are deliberately
-# NOT filtered here -- turning them into learner prose is the LLM explainer's
-# job in a later milestone, not this renderer's.
+# and the game phase (opening/middlegame/endgame is recorded on
+# MoveReport.phase for later milestones -- this renderer does not print it --
+# and the *Endgame piece variants carry no teaching value on their own).
+# Named motifs and mate patterns (hangingPiece, fork, backRankMate, mateIn1,
+# ...) are deliberately NOT filtered here -- turning them into learner prose is
+# the LLM explainer's job in a later milestone, not this renderer's.
 _NOISE_CONCEPTS = frozenset(
     {
         "equality", "advantage", "crushing", "mate",
@@ -36,18 +37,34 @@ def _teaching_concepts(concepts: tuple[str, ...]) -> tuple[str, ...]:
 
 _PROMOTION_WORDS = {"q": "queen", "r": "rook", "b": "bishop", "n": "knight"}
 
-# Keyed by (from, to) squares, which fully determine the rook's own move for a
-# legal castle in standard (non-Chess960) chess -- the only variant this
-# project supports. NOT used to DETECT castling (a queen or rook sliding
-# between the same two squares emits the identical UCI) -- describe_uci's
-# is_castling flag must come from SAN ("O-O"/"O-O-O"), which python-chess
-# only emits for a genuine castling move.
-_CASTLE_TEXT = {
-    "e1g1": "castling kingside (king to g1, rook to f1)",
-    "e1c1": "castling queenside (king to c1, rook to d1)",
-    "e8g8": "castling kingside (king to g8, rook to f8)",
-    "e8c8": "castling queenside (king to c8, rook to d8)",
-}
+
+def _castle_text(uci: str) -> str:
+    """Both destinations for a castle, derived from the UCI's own squares.
+
+    Computed, not looked up in a table of the four standard-chess UCIs. The
+    CLI rejects Chess960 (the vendored concept tagger cannot handle it), so
+    only those four reach this function today and the table would do -- but a
+    table fails SILENTLY and wrongly on anything else: python-chess emits
+    Chess960 castling in king-takes-rook form ("g1h1"), which missed the
+    table and fell through to "g1 to h1", naming the ROOK's square as the
+    king's destination. Deriving the squares costs two lines and cannot do
+    that, whoever calls it.
+
+    The rules fix the destinations in both: the king ends on the g-file
+    (kingside) or the c-file (queenside) of its own back rank, with the rook
+    beside it on f or d. Which side it is follows from the direction, in both
+    notations -- the king always starts between its two rooks, so the square
+    it moves towards is on the side being castled.
+
+    NOT used to DETECT castling (a queen or rook sliding between the same two
+    squares emits the identical UCI) -- describe_uci's is_castling flag must
+    come from SAN ("O-O"/"O-O-O"), which python-chess only emits for a genuine
+    castling move.
+    """
+    rank = uci[1]
+    if uci[2] > uci[0]:
+        return f"castling kingside (king to g{rank}, rook to f{rank})"
+    return f"castling queenside (king to c{rank}, rook to d{rank})"
 
 
 def describe_uci(uci: str, is_castling: bool = False) -> str:
@@ -63,7 +80,7 @@ def describe_uci(uci: str, is_castling: bool = False) -> str:
     from e1 to g1, which is not a castle.
     """
     if is_castling:
-        return _CASTLE_TEXT.get(uci, f"{uci[:2]} to {uci[2:4]}")
+        return _castle_text(uci)
     frm, to = uci[:2], uci[2:4]
     if len(uci) == 5:
         piece = _PROMOTION_WORDS.get(uci[4], uci[4])
@@ -116,6 +133,11 @@ def render_text(report: GameReport, show_san: bool = False) -> str:
     lines.append("")
 
     for move in report.moves:
+        # Most plies in a real game are unremarkable, and an unremarkable ply
+        # has nothing to print -- skip before describing it, not after.
+        if move.judgement is None and not move.violations:
+            continue
+
         # The report interleaves both players move by move, so naming the
         # mover explicitly in the header is load-bearing, not decorative:
         # without it "good for you" / "bad for you" (see eval_text) and
@@ -125,16 +147,26 @@ def render_text(report: GameReport, show_san: bool = False) -> str:
         described = _describe_move(move, show_san)
         evaluation = eval_text(move.cur_cp, move.cur_mate)
 
-        if move.judgement is None and not move.violations:
-            continue
-
         header = f"{move.move_number}. {mover_label}: {described}   ({evaluation})"
         if move.judgement is not None:
             header += f"   <- {_LABEL[move.judgement]}"
         lines.append(header)
 
-        if move.best_uci and move.judgement is not None:
-            better = move.best_uci if show_san else describe_uci(move.best_uci)
+        # `move.best_uci != move.uci` guard: the baseline and the played-move
+        # search are separate searches, so the engine's own top choice can
+        # still carry a judgement. Never advise the learner to play the move
+        # they just played.
+        if move.best_uci and move.judgement is not None and move.best_uci != move.uci:
+            if show_san and move.best_san:
+                better = move.best_san
+            else:
+                # is_castling must come from SAN, never from the squares -- see
+                # describe_uci. No best_san (an older report) means "not known
+                # to be a castle", which renders as plain squares.
+                better = describe_uci(
+                    move.best_uci,
+                    is_castling=bool(move.best_san and move.best_san.startswith("O-O")),
+                )
             lines.append(f"      better was {better}")
         concepts = _teaching_concepts(move.concepts)
         if concepts:

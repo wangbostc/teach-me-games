@@ -32,12 +32,15 @@ def _punisher_cp(cur_cp: int | None, cur_mate: int | None) -> int:
         # only ever classify a move as BLUNDER/MISTAKE/INACCURACY off a
         # NEGATIVE cur_mate (the mover walked into a forced mate); a positive
         # cur_mate (the mover delivers mate) never reaches TAGGABLE. Nothing
-        # currently enforces that from here, so assert it rather than silently
+        # currently enforces that from here, so check it rather than silently
         # returning the wrong sign for MATE_SCORE if it ever stops holding.
-        assert cur_mate < 0, (
-            f"_punisher_cp expected a losing mate score for a taggable move, "
-            f"got cur_mate={cur_mate}"
-        )
+        # Raised explicitly, not asserted: `python -O` strips an `assert`, and
+        # a guard that only exists in non-optimised runs is not a guard.
+        if cur_mate >= 0:
+            raise AssertionError(
+                f"_punisher_cp expected a losing mate score for a taggable move, "
+                f"got cur_mate={cur_mate}"
+            )
         return MATE_SCORE
     return -(cur_cp or 0)
 
@@ -141,21 +144,44 @@ def analyse_game(game: chess.pgn.Game, engine, refutation_plies: int = 8) -> Gam
         best = before.best
         prev_cp, prev_mate = (_cp_and_mate(best) if best else (None, None))
 
-        played = engine.analyse_move(board, move)
+        # When the played move IS the engine's own top choice, reuse the
+        # baseline candidate instead of re-searching it. The MultiPV baseline
+        # and analyse_move's single-line search explore different trees at the
+        # same node budget, so scoring the SAME move twice can differ by enough
+        # (~55cp near equality is already an Inaccuracy -- see
+        # grading/winprob.py) to manufacture a judgement against the engine's
+        # own recommendation, and then advise "better was <the move you just
+        # played>". Reusing the baseline candidate is the strictest possible
+        # form of equal effort, and saves a search. `best.pv` is required
+        # because a candidate with no pv cannot satisfy the seam contract
+        # asserted below.
+        if best is not None and best.pv and best.move == move.uci():
+            played = best
+        else:
+            played = engine.analyse_move(board, move)
         # SEAM CONTRACT: pv[1:] below is only "the refutation" because
         # StockfishAdapter.analyse_move passes root_moves=[move] (UCI
         # `searchmoves`), which restricts the search to the played move --
         # so pv[0] must equal it. A different Analyse-shaped adapter that
         # didn't honour that would silently hand tag_self_blunder the wrong
         # slice, producing wrong concept tags with no crash. Turn that
-        # silent corruption into a loud one.
-        assert played.pv and played.pv[0] == move.uci(), (
-            "engine.analyse_move(board, move) must return a pv whose first "
-            "move is the played move itself (i.e. the search must be "
-            "restricted to `move`, as StockfishAdapter does via root_moves); "
-            f"got pv={played.pv!r} for played move {move.uci()!r}"
-        )
+        # silent corruption into a loud one. Raised explicitly rather than
+        # asserted: `python -O` (and PYTHONOPTIMIZE, which slim container
+        # entrypoints do set) strips an `assert` statement outright, which
+        # would put the silent corruption straight back.
+        if not played.pv or played.pv[0] != move.uci():
+            raise AssertionError(
+                "engine.analyse_move(board, move) must return a pv whose first "
+                "move is the played move itself (i.e. the search must be "
+                "restricted to `move`, as StockfishAdapter does via root_moves); "
+                f"got pv={played.pv!r} for played move {move.uci()!r}"
+            )
         cur_cp, cur_mate = _cp_and_mate(played)
+
+        # SAN for the recommended move, so the renderer can tell a castle from
+        # a king slide (describe_uci must never infer castling from the UCI
+        # squares alone -- see report/render.py).
+        best_san = board.san(chess.Move.from_uci(best.move)) if best else None
 
         judgement = judge_move(prev_cp, prev_mate, cur_cp, cur_mate)
         violations = _filter_violations(
@@ -168,6 +194,18 @@ def analyse_game(game: chess.pgn.Game, engine, refutation_plies: int = 8) -> Gam
         concepts: tuple[str, ...] = ()
         if judgement in TAGGABLE:
             refutation = list(played.pv[1 : 1 + refutation_plies])
+            # cook.py's detectors assume a puzzle line ENDS on the punisher's
+            # move: its own length tags only ever test EVEN mainline lengths
+            # (2 -> oneMove, 4 -> short, >=8 -> veryLong), defensive_move reads
+            # mainline[-1] as a punisher move, and quiet_move excludes the last
+            # node as "the last move of the puzzle". Our mainline is
+            # [played, *refutation], so an even-length refutation ends the line
+            # on the BLUNDERER's own reply and breaks all three -- most visibly
+            # by tagging that quiet reply "defensiveMove", a concept the
+            # renderer shows the learner verbatim. Drop the trailing ply so the
+            # refutation always has an odd number of plies.
+            if len(refutation) % 2 == 0:
+                refutation = refutation[:-1]
             if refutation:
                 concepts = tuple(
                     tag_self_blunder(
@@ -192,6 +230,7 @@ def analyse_game(game: chess.pgn.Game, engine, refutation_plies: int = 8) -> Gam
                 cur_mate=cur_mate,
                 judgement=judgement,
                 best_uci=best.move if best else None,
+                best_san=best_san,
                 concepts=concepts,
                 violations=violations,
             )
