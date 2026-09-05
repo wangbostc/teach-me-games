@@ -11,10 +11,27 @@
     rel="stylesheet"
   />
   <link rel="stylesheet" href="/static/style.css" />
+  <!--
+    three.js loads from unpkg at a pinned version with no Subresource
+    Integrity check. Both are accepted here, not fixed: this app binds to
+    127.0.0.1 only (tmg.web.app.run), so the CDN dependency and the absent
+    integrity hash are a localhost-tool tradeoff, not a public-site one. If
+    that ever stops being true, vendor three.js into a checked-in
+    static/vendor/ instead of adding integrity hashes to a CDN URL.
+
+    "three/addons/" is the ONLY place the addon path is pinned. board3d.js
+    imports OrbitControls and RoomEnvironment by bare specifier through
+    this entry rather than a second hardcoded unpkg URL -- two independent
+    pins on the same three.js version drift apart the moment either one is
+    bumped alone, and the result (two loaded copies of three.js) fails in
+    ways that are very hard to diagnose. Bump the version here and both
+    imports move together.
+  -->
   <script type="importmap">
     {
       "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
       }
     }
   </script>

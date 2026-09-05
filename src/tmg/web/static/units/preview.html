@@ -3,10 +3,20 @@
 <head>
   <meta charset="utf-8" />
   <title>unit preview</title>
+  <!--
+    three.js loads from unpkg at a pinned version with no Subresource
+    Integrity check -- accepted here, not fixed: this is a dev-only,
+    localhost-served preview page (see index.html's importmap for the same
+    tradeoff on the real app). "three/addons/" is the ONLY place the addon
+    path is pinned; the script below imports OrbitControls and
+    RoomEnvironment by bare specifier through this entry rather than a
+    second hardcoded unpkg URL, so bumping the version here moves both.
+  -->
   <script type="importmap">
     {
       "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
       }
     }
   </script>
@@ -32,8 +42,8 @@
 
   <script type="module">
     import * as THREE from "three";
-    import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
-    import { RoomEnvironment } from "https://unpkg.com/three@0.160.0/examples/jsm/environments/RoomEnvironment.js";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
     import { fitToRole } from "/static/units/common.js";
     import { stone, burnishedGold, wood } from "/static/units/materials.js";
 

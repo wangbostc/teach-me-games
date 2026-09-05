@@ -94,6 +94,32 @@ def _describe_move(move: MoveReport, show_san: bool) -> str:
     return describe_uci(move.uci, is_castling=move.san.startswith("O-O"))
 
 
+def eval_bucket(cp: int | None, mate: int | None) -> str:
+    """The mover-POV category behind eval_text's prose, as a bare token: one
+    of "good", "bad", "even", or "unknown" (neither cp nor mate given). Same
+    POV convention as eval_text -- "good" always describes whoever just
+    played the move being described.
+
+    A caller that needs to BRANCH on the category (tmg.web.explain sends
+    this to app.js so an option card's colour keys off it) should use this,
+    not search eval_text's rendered sentence for a substring: eval_text's
+    wording is prose that can change; this is the structured fact behind it
+    (finding 7 of the board3d review).
+    """
+    if mate is not None:
+        return "good" if mate > 0 else "bad"
+    if cp is None:
+        return "unknown"
+    if cp > 0:
+        return "good"
+    if cp < 0:
+        return "bad"
+    return "even"
+
+
+_POV_PHRASE = {"good": "good for you", "bad": "bad for you", "even": "even"}
+
+
 def eval_text(cp: int | None, mate: int | None) -> str:
     """Format an evaluation. Both cp and mate are already mover-POV (see
     MoveReport), so "good for you" / "bad for you" always describes whoever
@@ -104,18 +130,12 @@ def eval_text(cp: int | None, mate: int | None) -> str:
     instead of keeping a second copy that could silently drift from this
     one -- see that module's own eval-rendering call site.
     """
+    bucket = eval_bucket(cp, mate)
     if mate is not None:
-        pov = "good for you" if mate > 0 else "bad for you"
-        return f"mate in {abs(mate)}, {pov}"
+        return f"mate in {abs(mate)}, {_POV_PHRASE[bucket]}"
     if cp is None:
         return "?"
-    if cp > 0:
-        pov = "good for you"
-    elif cp < 0:
-        pov = "bad for you"
-    else:
-        pov = "even"
-    return f"{cp / 100:+.2f}, {pov}"
+    return f"{cp / 100:+.2f}, {_POV_PHRASE[bucket]}"
 
 
 def _plural(count: int, word: str) -> str:

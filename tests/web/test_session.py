@@ -1,5 +1,6 @@
 import chess
 
+from tmg.engine.protocol import Analysis, Candidate, EngineId
 from tmg.web.play_engine import Difficulty
 from tmg.web.session import GameSession
 
@@ -101,3 +102,47 @@ def test_to_pgn_game_sets_headers_for_a_black_user_session():
     assert headers["White"] == "Stockfish"
     assert headers["Black"] == "You"
     assert headers["Result"] == "0-1"
+
+
+def _analysis(nodes=1) -> Analysis:
+    return Analysis(
+        candidates=(Candidate(0, "e2e4", 10, None, ("e2e4",)),),
+        side_to_move="white",
+        nodes=nodes,
+        engine_id=EngineId(name="Fake", net_hash="nn-test", threads=1),
+    )
+
+
+def test_cached_analysis_is_none_before_anything_is_cached():
+    # Finding 8: app.py caches one Learning Mode engine search per turn on
+    # the session, keyed by FEN, so get_options and get_option_explanations
+    # can share it instead of each running their own search.
+    session = _new_session()
+    assert session.cached_analysis(session.board.fen()) is None
+
+
+def test_cache_analysis_is_returned_for_the_exact_fen_it_was_cached_under():
+    session = _new_session()
+    fen = session.board.fen()
+    analysis = _analysis()
+    session.cache_analysis(fen, analysis)
+    assert session.cached_analysis(fen) is analysis
+
+
+def test_cached_analysis_misses_for_a_different_fen():
+    # A move changes the FEN (at minimum halfmove/fullmove counters), so a
+    # cache entry from the position before it must never be handed back
+    # for the position after -- invalidation falls out of the cache key.
+    session = _new_session()
+    session.cache_analysis(session.board.fen(), _analysis())
+    session.apply(chess.Move.from_uci("e2e4"))
+    assert session.cached_analysis(session.board.fen()) is None
+
+
+def test_cache_analysis_overwrites_a_previous_entry():
+    session = _new_session()
+    fen = session.board.fen()
+    session.cache_analysis(fen, _analysis(nodes=1))
+    second = _analysis(nodes=2)
+    session.cache_analysis(fen, second)
+    assert session.cached_analysis(fen) is second

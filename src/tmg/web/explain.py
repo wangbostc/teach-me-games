@@ -26,7 +26,7 @@ from pathlib import Path
 import chess
 
 from tmg.engine.protocol import Candidate
-from tmg.report.render import describe_uci, eval_text
+from tmg.report.render import describe_uci, eval_bucket, eval_text
 
 CLAUDE_TIMEOUT_SECONDS = 60.0
 REJECTION_LOG_PATH = Path.home() / ".tmg" / "explain_rejections.jsonl"
@@ -162,6 +162,12 @@ def build_struct_options(
     Candidate struct our own code produced -- no LLM call, nothing to
     validate, nothing that can take more than a few milliseconds. Safe to
     call on every turn; `build_explanations` is the slow half.
+
+    `eval_bucket` rides alongside `eval_text` so app.js's option-card
+    colouring can key off a structured "good"/"bad"/"even"/"unknown" token
+    instead of string-matching eval_text's prose for "bad for you" / "even"
+    -- which also used to cite this module's own long-deleted `_eval_text`
+    in a stale comment (finding 7).
     """
     options = []
     for candidate in candidates:
@@ -172,6 +178,7 @@ def build_struct_options(
                 "uci": candidate.move,
                 "move_text": move_text,
                 "eval_text": eval_text(candidate.cp, candidate.mate),
+                "eval_bucket": eval_bucket(candidate.cp, candidate.mate),
             }
         )
     return options

@@ -3,7 +3,7 @@ from tmg.grading.classify import Judgement
 from tmg.grading.phase import Phase
 from tmg.grading.principles import Violation
 from tmg.report.model import GameReport, MoveReport
-from tmg.report.render import describe_uci, render_text
+from tmg.report.render import describe_uci, eval_bucket, eval_text, render_text
 
 
 def _move(**overrides) -> MoveReport:
@@ -75,6 +75,33 @@ def test_eval_shows_good_for_you_when_favourable():
         white="me", black="them", result="*", moves=(move,), engine_id=None, nodes=0,
     )
     assert "good for you" in render_text(report)
+
+
+# eval_bucket is eval_text's structured counterpart (finding 7 of the
+# board3d review): tmg.web.explain sends it to app.js so an option card's
+# colour can key off a bare token instead of string-matching eval_text's
+# prose. Both must always agree on which bucket a given (cp, mate) falls
+# into -- proven here directly, not just through render_text's output.
+def test_eval_bucket_categorizes_cp_scores():
+    assert eval_bucket(150, None) == "good"
+    assert eval_bucket(-150, None) == "bad"
+    assert eval_bucket(0, None) == "even"
+    assert eval_bucket(None, None) == "unknown"
+
+
+def test_eval_bucket_categorizes_mate_scores():
+    assert eval_bucket(None, 3) == "good"
+    assert eval_bucket(None, -3) == "bad"
+
+
+def test_eval_text_and_eval_bucket_agree():
+    for cp, mate in [(150, None), (-150, None), (0, None), (None, None), (None, 3), (None, -3)]:
+        bucket = eval_bucket(cp, mate)
+        text = eval_text(cp, mate)
+        if bucket == "unknown":
+            assert text == "?"
+        else:
+            assert {"good": "good for you", "bad": "bad for you", "even": "even"}[bucket] in text
 
 
 def test_noise_concept_tags_are_filtered_but_named_motifs_survive():

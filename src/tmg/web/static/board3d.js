@@ -19,8 +19,13 @@
 // illegal attempt is submitted, the server rejects it, and the caller reverts
 // the board via a fresh setPosition(lastKnownFen).
 import * as THREE from "three";
-import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
-import { RoomEnvironment } from "https://unpkg.com/three@0.160.0/examples/jsm/environments/RoomEnvironment.js";
+// Bare specifiers resolved through the "three/addons/" entry in index.html's
+// importmap -- the SAME pin that resolves "three" itself. A hardcoded
+// absolute unpkg URL here used to duplicate that pin; bump one without the
+// other and the page loads two separate copies of three.js, which fails in
+// ways that are very hard to diagnose (see index.html's importmap comment).
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import * as castle from "/static/units/castle.js";
 import * as rampart from "/static/units/rampart.js";
 import * as tower from "/static/units/tower.js";
@@ -30,7 +35,7 @@ import * as dungeon from "/static/units/dungeon.js";
 import * as stronghold from "/static/units/stronghold.js";
 import * as fortress from "/static/units/fortress.js";
 import * as conflux from "/static/units/conflux.js";
-import { wood, stone, burnishedGold } from "/static/units/materials.js";
+import { wood, stone, burnishedGold, disposeTextureCache } from "/static/units/materials.js";
 import { fitToRole } from "/static/units/common.js";
 
 const FILES = "abcdefgh";
@@ -66,15 +71,39 @@ export function factionLabel(key) {
   return FACTIONS[key].label;
 }
 
+// Gates the console/debug hooks below (window.__tmgBoard, reviewRank) so
+// they only exist on an explicit opt-in, not on every page load (finding
+// 9). Same query-string convention units/preview.html already uses.
+function devHooksEnabled() {
+  try {
+    return new URLSearchParams(window.location.search).has("dev");
+  } catch {
+    return false;
+  }
+}
+
 function squareToWorld(square) {
   const col = FILES.indexOf(square[0]);
   const row = parseInt(square[1], 10) - 1;
   return { x: (col - 3.5) * SQUARE_SIZE, z: (3.5 - row) * SQUARE_SIZE };
 }
 
-function parseFenPlacement(fen) {
+const _PIECE_LETTER_RE = /[prnbqk]/i;
+
+// Bounded and validated: a malformed or truncated FEN used to overflow
+// `FILES[file]` past "h" into `undefined`, producing a piece keyed
+// "undefined5" that squareToWorld then placed at NaN, and a stray
+// non-piece, non-digit character (e.g. a typo'd "9") fell straight through
+// to the piece branch and got recorded as a piece of that literal letter --
+// both silent failures one level up from what check_units.mjs already
+// guards against for unit geometry (finding 10). Every failure mode here
+// throws instead: a bad FEN is a caller bug, not a rendering decision.
+export function parseFenPlacement(fen) {
   const placement = fen.split(" ")[0];
   const ranks = placement.split("/"); // rank 8 first, as FEN always is
+  if (ranks.length !== 8) {
+    throw new Error(`parseFenPlacement: expected 8 ranks, got ${ranks.length} (${JSON.stringify(placement)})`);
+  }
   const board = {};
   ranks.forEach((rankStr, i) => {
     const rank = 8 - i;
@@ -84,14 +113,59 @@ function parseFenPlacement(fen) {
         file += parseInt(ch, 10);
         continue;
       }
+      if (!_PIECE_LETTER_RE.test(ch)) {
+        throw new Error(`parseFenPlacement: rank ${rank} has an unrecognized character ${JSON.stringify(ch)} (${JSON.stringify(rankStr)})`);
+      }
+      if (file >= 8) {
+        throw new Error(`parseFenPlacement: rank ${rank} overflows past the h-file (${JSON.stringify(rankStr)})`);
+      }
       board[FILES[file] + rank] = {
         type: ch.toLowerCase(),
         color: ch === ch.toUpperCase() ? "w" : "b",
       };
       file += 1;
     }
+    if (file !== 8) {
+      throw new Error(`parseFenPlacement: rank ${rank} covers ${file} square(s), not 8 (${JSON.stringify(rankStr)})`);
+    }
   });
   return board;
+}
+
+// Same piece, same side -- two `undefined`s (both squares empty) count as
+// equal too. The only thing _syncPieceMeshes cares about per square.
+function _sameOccupant(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.type === b.type && a.color === b.color;
+}
+
+// Every square whose occupant differs between two parsed board states --
+// added, removed, or replaced (a capture, a promotion, one side of a
+// castle, the captured pawn's square in an en passant). An ordinary move
+// touches exactly two squares; this is what lets _syncPieceMeshes rebuild
+// only those instead of every mesh on the board (finding 2). Exported so
+// tests/web can exercise the diff directly, and so a caller wanting to
+// know "did anything change" doesn't have to instantiate a Board3D to ask.
+export function diffOccupiedSquares(prevState, nextState) {
+  const squares = new Set([...Object.keys(prevState), ...Object.keys(nextState)]);
+  const changed = [];
+  for (const square of squares) {
+    if (!_sameOccupant(prevState[square], nextState[square])) changed.push(square);
+  }
+  return changed;
+}
+
+// The UCI for a click-to-move, applying the same auto-queen promotion rule
+// _handleSquareClick always has: a pawn landing on the back rank always
+// promotes (underpromotion is a real gap -- see the review's "explicitly
+// NOT yours" note -- not something this function tries to guess at).
+// Extracted so tests/web can exercise the rule without a live Board3D.
+export function buildMoveUci(fromSquare, toSquare, movingPieceType) {
+  let uci = fromSquare + toSquare;
+  const isPromotion = movingPieceType === "p" && (toSquare[1] === "8" || toSquare[1] === "1");
+  if (isPromotion) uci += "q";
+  return uci;
 }
 
 // One piece: a plinth plus the faction's unit for this chess role, scaled by
@@ -101,7 +175,18 @@ function parseFenPlacement(fen) {
 // the pawn, so the board can be read by silhouette before a learner knows
 // any one army's units.
 function buildPieceMesh(type, factionKey, color) {
-  const faction = FACTIONS[factionKey] || FACTIONS.castle;
+  const faction = FACTIONS[factionKey];
+  if (!faction) {
+    // Silently rendering Castle for an unrecognized key used to leave the
+    // matchup line (app.js's showMatchup) announcing the army the user
+    // actually picked while the board showed a different one -- text and
+    // pieces actively disagreeing, with nothing to say why (finding 11).
+    // A bad faction key is a caller bug (app.js only ever passes
+    // FACTION_KEYS-derived strings), so fail loudly instead.
+    throw new Error(
+      `buildPieceMesh: unknown faction key ${JSON.stringify(factionKey)} (expected one of ${FACTION_KEYS.join(", ")})`
+    );
+  }
   const mod = faction.mod;
 
   // A stone plinth, ringed in the army's accent metal. Its colour is the
@@ -199,6 +284,10 @@ export class Board3D {
     this.selected = null;
     this.boardState = {};
     this.pieceMeshes = {};
+    // The occupancy _syncPieceMeshes last actually built meshes for --
+    // compared against `boardState` on every setPosition so only the
+    // squares that changed get rebuilt, not all 32 (finding 2).
+    this._lastSyncedState = {};
 
     this._onClick = this._onClick.bind(this);
     this._onResize = this._onResize.bind(this);
@@ -213,8 +302,13 @@ export class Board3D {
     this._resizeObserver = new ResizeObserver(this._onResize);
     this._resizeObserver.observe(this.container);
     requestAnimationFrame(this._animate);
-    // Dev hook: lets a console (or a review script) reposition the camera.
-    window.__tmgBoard = this;
+    // Dev hook: lets a console (or a review script) reposition the camera
+    // via reviewRank() below. Gated behind ?dev=1 (the same query-string
+    // convention units/preview.html already uses) so a plain page load
+    // never carries a live reference to its own board on `window` -- one
+    // that used to survive dispose() and keep a "disposed" board (and
+    // everything it retains) reachable forever (finding 9).
+    if (devHooksEnabled()) window.__tmgBoard = this;
   }
 
   // Frame a close review view of one rank -- `rank` 1 shows white's back
@@ -309,7 +403,10 @@ export class Board3D {
 
   setFactions(factions) {
     this.factions = factions;
-    this._syncPieceMeshes();
+    // Occupancy hasn't changed, only which army skins each side -- every
+    // piece's mesh depends on its faction, so this is the one caller that
+    // needs a full rebuild regardless of what diffOccupiedSquares would say.
+    this._rebuildAllPieceMeshes();
   }
 
   setInteractive(enabled) {
@@ -324,17 +421,18 @@ export class Board3D {
     this._clearSelection();
   }
 
+  // Disposes and rebuilds only the squares whose occupant changed since the
+  // last call -- an ordinary move touches two, a castle four, an en
+  // passant three -- instead of tearing down and rebuilding all 32 pieces
+  // on every ply (finding 2). The very first call (nothing synced yet)
+  // diffs against {}, so every occupied square is "changed": that first
+  // sync is naturally a full build.
   _syncPieceMeshes() {
-    Object.values(this.pieceMeshes).forEach((group) => {
-      this.scene.remove(group);
-      group.traverse((obj) => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) obj.material.dispose();
-      });
-    });
-    this.pieceMeshes = {};
-
-    Object.entries(this.boardState).forEach(([square, piece]) => {
+    const changedSquares = diffOccupiedSquares(this._lastSyncedState, this.boardState);
+    changedSquares.forEach((square) => {
+      this._disposePieceMesh(square);
+      const piece = this.boardState[square];
+      if (!piece) return; // the square is now empty; nothing to (re)build
       const mesh = buildPieceMesh(piece.type, this.factions[piece.color], piece.color);
       const { x, z } = squareToWorld(square);
       mesh.position.set(x, 0.1, z);
@@ -342,6 +440,27 @@ export class Board3D {
       this.scene.add(mesh);
       this.pieceMeshes[square] = mesh;
     });
+    this._lastSyncedState = this.boardState;
+  }
+
+  // A full teardown-and-rebuild of every occupied square regardless of
+  // whether the occupancy itself changed -- needed only when what a piece
+  // LOOKS like has to change (setFactions), never for an ordinary move.
+  _rebuildAllPieceMeshes() {
+    Object.keys(this.pieceMeshes).forEach((square) => this._disposePieceMesh(square));
+    this._lastSyncedState = {};
+    this._syncPieceMeshes();
+  }
+
+  _disposePieceMesh(square) {
+    const mesh = this.pieceMeshes[square];
+    if (!mesh) return;
+    this.scene.remove(mesh);
+    mesh.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) obj.material.dispose();
+    });
+    delete this.pieceMeshes[square];
   }
 
   _onClick(event) {
@@ -382,10 +501,7 @@ export class Board3D {
         return;
       }
       this._clearSelection();
-      let uci = fromSquare + square;
-      const isPromotion = fromPiece.type === "p" && (square[1] === "8" || square[1] === "1");
-      if (isPromotion) uci += "q";
-      this.onMove(uci);
+      this.onMove(buildMoveUci(fromSquare, square, fromPiece.type));
       return;
     }
 
@@ -447,9 +563,41 @@ export class Board3D {
     if (this._resizeObserver) this._resizeObserver.disconnect();
     this.renderer.domElement.removeEventListener("click", this._onClick);
     this.controls.dispose();
+
+    // The scene's own GPU resources -- board square geometry/materials,
+    // the frame, the desk, and whichever piece meshes are still live --
+    // were never freed here before, only the renderer/controls were. Since
+    // app.js disposes and rebuilds a whole Board3D per game, every one of
+    // those was a full board's worth of VRAM stranded on every new game
+    // (finding 1). A single scene-wide traversal disposes all of it,
+    // exactly the pattern _syncPieceMeshes already used per-piece.
+    this.scene.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        materials.forEach((mat) => mat.dispose());
+      }
+    });
+    // The room environment map (PMREMGenerator's output) is its own GPU
+    // texture, separate from the object graph traverse() just walked.
+    if (this.scene.environment) this.scene.environment.dispose();
+    this.pieceMeshes = {};
+    this.squareMeshes = {};
+    this._lastSyncedState = {};
+    // Texture MAPS (wood grain, brushed metal, ...) are shared across many
+    // materials via materials.js's own cache and are NOT freed by a
+    // material's dispose() above -- see that module's header comment. Free
+    // the cache itself, once, here. Safe because app.js never runs two
+    // Board3D instances at once (dispose-then-construct per game), so
+    // nothing else can be depending on these textures while this runs.
+    disposeTextureCache();
+
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement === this.container) {
       this.container.removeChild(this.renderer.domElement);
     }
+    // A disposed board must not stay reachable from a live global -- see
+    // devHooksEnabled's assignment in the constructor (finding 9).
+    if (window.__tmgBoard === this) window.__tmgBoard = null;
   }
 }

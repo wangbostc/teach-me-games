@@ -8,11 +8,12 @@ logic (grading/, facts/) and the one module that owns a subprocess
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import chess
 import chess.pgn
 
+from tmg.engine.protocol import Analysis
 from tmg.web.play_engine import Difficulty
 
 
@@ -22,6 +23,20 @@ class GameSession:
     user_color: chess.Color
     difficulty: Difficulty
     learning_mode: bool
+
+    # Learning Mode's two per-turn endpoints (app.py's get_options and
+    # get_option_explanations) used to each run their own
+    # _learner_engine.analyse() call over the identical position -- ~0.66s
+    # duplicated on every turn, and two independent searches can rank
+    # candidates differently, so the prose could describe an ordering the
+    # struct never showed (finding 8). Caching the one search here, keyed
+    # by the exact FEN it was run against, lets whichever endpoint runs
+    # first serve both -- and invalidates itself for free: any move changes
+    # the board's FEN (at minimum its halfmove/fullmove counters), so a
+    # stale entry never matches. Both fields are private to this dataclass
+    # -- use cached_analysis()/cache_analysis() below, not these directly.
+    _cached_analysis_fen: str | None = field(default=None, repr=False, compare=False)
+    _cached_analysis: Analysis | None = field(default=None, repr=False, compare=False)
 
     @property
     def is_user_turn(self) -> bool:
@@ -33,6 +48,20 @@ class GameSession:
 
     def apply(self, move: chess.Move) -> None:
         self.board.push(move)
+
+    def cached_analysis(self, fen: str) -> Analysis | None:
+        """The Analysis cached for exactly this FEN, or None on a miss --
+        including "nothing cached yet" and "cached for a different
+        position." Callers must pass the FEN they're about to search
+        (`board.fen()`), not rely on this to notice the board moved on.
+        """
+        if self._cached_analysis_fen == fen:
+            return self._cached_analysis
+        return None
+
+    def cache_analysis(self, fen: str, analysis: Analysis) -> None:
+        self._cached_analysis_fen = fen
+        self._cached_analysis = analysis
 
     def result_string(self) -> str | None:
         return self.board.result() if self.is_over else None

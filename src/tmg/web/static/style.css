@@ -15,9 +15,17 @@
   --hairline: rgba(35, 32, 27, 0.14);
   --card-shadow: 0 1px 2px rgba(35, 32, 27, 0.06), 0 4px 10px rgba(35, 32, 27, 0.07);
 
-  --font-display: "Fraunces", "Iowan Old Style", serif;
-  --font-body: "Public Sans", -apple-system, sans-serif;
-  --font-data: "IBM Plex Mono", ui-monospace, monospace;
+  /* Each stack already ended in a generic family (serif/sans-serif/
+     monospace), so text was never going to be unreadable if
+     fonts.googleapis.com is unreachable -- but the browser's bare generic
+     default is a poor stand-in for Fraunces/Public Sans/IBM Plex Mono's
+     actual proportions. Widened to a real cross-platform local stack that
+     approximates each web font's character before falling back to the
+     generic family, so the page still looks considered rather than merely
+     legible when the CDN is down. */
+  --font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-body: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 * {
@@ -244,6 +252,14 @@ main {
   font-family: var(--font-body);
   font-weight: 600;
   color: var(--felt);
+}
+
+/* A rejected move (finding 6) -- same treatment as #start-error, just
+   inserted beside the board instead of the setup form. */
+#move-error {
+  color: var(--brick);
+  font-size: 0.9rem;
+  margin: 0.4rem 0 0;
 }
 
 /* Lives in the header row, pushed to the right, so it costs the board no

@@ -361,7 +361,53 @@ def test_options_endpoint_returns_the_struct_with_no_llm_call_at_all(client, mon
     options = resp.json()["options"]
     assert len(options) == 1  # _FakeEngine.analyse returns exactly one candidate
     assert "uci" in options[0] and "move_text" in options[0] and "eval_text" in options[0]
+    assert "eval_bucket" in options[0]  # structured field app.js keys its colour off (finding 7)
     assert "explanation" not in options[0]  # prose is a separate, later call
+
+
+def test_options_and_explanations_share_one_engine_search_per_turn(client, monkeypatch):
+    # Finding 8: get_options and get_option_explanations used to each run
+    # their own _learner_engine.analyse() over the identical position.
+    # Proves the fix by counting real analyse() calls on the LEARNER
+    # engine specifically -- not the play engine, whose own analyse() call
+    # (picking the bot's reply move) is unrelated and must not be conflated
+    # with it once a move is played below.
+    import tmg.web.explain as explain_module
+
+    monkeypatch.setattr(explain_module, "claude_available", lambda: True)
+    monkeypatch.setattr(explain_module, "_run_claude_prompt", lambda prompt: None)
+
+    client.post(
+        "/api/game", json={"side": "white", "difficulty": "easy", "learning_mode": True}
+    )
+
+    calls = {"n": 0}
+    learner_engine = app_module._learner_engine
+    original_analyse = _FakeEngine.analyse
+
+    def _counting_analyse(board):
+        calls["n"] += 1
+        return original_analyse(learner_engine, board)
+
+    monkeypatch.setattr(learner_engine, "analyse", _counting_analyse)
+
+    resp1 = client.get("/api/game/options")
+    resp2 = client.get("/api/game/options/explanations")
+    assert resp1.status_code == 200 and resp2.status_code == 200
+    assert calls["n"] == 1, "one search should have served both endpoints"
+
+    # A fresh call to the SAME endpoint, still the same turn, is also a
+    # cache hit -- not just the options->explanations handoff.
+    resp3 = client.get("/api/game/options")
+    assert resp3.status_code == 200
+    assert calls["n"] == 1
+
+    # Once the position actually changes (a move is played), the cache
+    # must not silently serve a stale search for the new position.
+    client.post("/api/game/move", json={"uci": resp1.json()["options"][0]["uci"]})
+    resp4 = client.get("/api/game/options")
+    assert resp4.status_code == 200
+    assert calls["n"] == 2, "a new position must trigger a fresh search"
 
 
 def test_options_endpoint_rejected_once_the_game_is_over(client, monkeypatch):
