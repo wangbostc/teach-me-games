@@ -229,6 +229,8 @@ function startGame() {
     });
     board3d.setPosition(data.fen);
     board3d.setInteractive(!learningMode);
+    // A fresh board starts unlocked; the button reflects that.
+    setLockButton(false);
 
     if (learningMode) {
       renderOptions();
@@ -236,7 +238,51 @@ function startGame() {
   });
 }
 
+// -- View controls: lock, reset, fullscreen ---------------------------------
+
+function setLockButton(locked) {
+  const btn = document.getElementById("tool-lock");
+  btn.setAttribute("aria-pressed", String(locked));
+  btn.textContent = locked ? "Unlock view" : "Lock view";
+}
+
+function toggleLock() {
+  if (!board3d) return;
+  const locked = !board3d.cameraLocked;
+  board3d.setCameraLocked(locked);
+  setLockButton(locked);
+}
+
+function resetView() {
+  if (board3d) board3d.resetView();
+}
+
+// The stage element itself goes fullscreen, so the board takes the whole
+// display with no page chrome. Its CSS switches from a viewport-fitted
+// square to fill-the-screen (see .board-stage:fullscreen), and the canvas
+// follows through the board's ResizeObserver.
+function toggleFullscreen() {
+  const stage = document.getElementById("board3d");
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  } else if (stage.requestFullscreen) {
+    stage.requestFullscreen();
+  }
+}
+
+function syncFullscreenButton() {
+  const on = !!document.fullscreenElement;
+  const btn = document.getElementById("tool-fullscreen");
+  btn.textContent = on ? "Exit fullscreen" : "Fullscreen";
+  btn.setAttribute("aria-pressed", String(on));
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   populateFactionSelect();
   document.getElementById("start").addEventListener("click", startGame);
+  document.getElementById("tool-lock").addEventListener("click", toggleLock);
+  document.getElementById("tool-reset").addEventListener("click", resetView);
+  document.getElementById("tool-fullscreen").addEventListener("click", toggleFullscreen);
+  document.addEventListener("fullscreenchange", syncFullscreenButton);
+  if (!document.fullscreenEnabled) document.getElementById("tool-fullscreen").hidden = true;
 });

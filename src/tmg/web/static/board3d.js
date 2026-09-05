@@ -411,8 +411,27 @@ export class Board3D {
 
   setInteractive(enabled) {
     this.interactive = enabled;
-    this.container.style.cursor = enabled ? "grab" : "default";
+    this._updateCursor();
     if (!enabled) this._clearSelection();
+  }
+
+  // Freeze the camera. Clicking pieces still works -- a click is not a drag
+  // -- but the board can no longer be nudged or spun by a hand that moved a
+  // few pixels while selecting.
+  setCameraLocked(locked) {
+    this.cameraLocked = locked;
+    this.controls.enabled = !locked;
+    this._updateCursor();
+  }
+
+  resetView() {
+    this._setDefaultCameraPose();
+    this.controls.update();
+  }
+
+  _updateCursor() {
+    if (!this.interactive) this.container.style.cursor = "default";
+    else this.container.style.cursor = this.cameraLocked ? "pointer" : "grab";
   }
 
   setPosition(fen) {

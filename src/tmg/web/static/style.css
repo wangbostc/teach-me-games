@@ -234,10 +234,64 @@ main {
   width: min(calc(100vh - var(--chrome)), calc(100vw - 3rem));
   min-width: 320px;
   aspect-ratio: 1 / 1;
+  position: relative;
   border-radius: 8px;
   overflow: hidden;
   box-shadow: var(--card-shadow);
   cursor: grab;
+}
+
+/* Fullscreen: the stage IS the display. Drop the square constraint and let
+   the 3D view take the full aspect of the screen -- the camera adapts. */
+.board-stage:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  aspect-ratio: auto;
+  min-width: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* -- View controls, tucked into the stage's top-right corner ------------ */
+
+.board-tools {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  display: flex;
+  gap: 0.35rem;
+  z-index: 2;
+}
+
+.tool-btn {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--parchment);
+  background: rgba(42, 36, 32, 0.72);
+  border: 1px solid rgba(246, 241, 231, 0.22);
+  border-radius: 999px;
+  padding: 0.36rem 0.75rem;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.tool-btn:hover {
+  background: rgba(42, 36, 32, 0.92);
+  border-color: rgba(246, 241, 231, 0.45);
+}
+
+.tool-btn[aria-pressed="true"] {
+  background: var(--brass);
+  border-color: var(--brass);
+  color: var(--ink);
+}
+
+.tool-btn:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
 }
 
 .board-stage canvas {

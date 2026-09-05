@@ -82,7 +82,13 @@
 
     <section id="game" class="game-layout" hidden>
       <div class="board-column">
-        <div id="board3d" class="board-stage"></div>
+        <div id="board3d" class="board-stage">
+          <div class="board-tools" role="toolbar" aria-label="View controls">
+            <button id="tool-lock" class="tool-btn" type="button" aria-pressed="false" title="Lock the view so clicks can't rotate the board">Lock view</button>
+            <button id="tool-reset" class="tool-btn" type="button" title="Return the camera to the default angle">Reset view</button>
+            <button id="tool-fullscreen" class="tool-btn" type="button" title="Use the whole screen">Fullscreen</button>
+          </div>
+        </div>
         <p id="status" class="status-line"></p>
       </div>
       <aside class="notebook">
