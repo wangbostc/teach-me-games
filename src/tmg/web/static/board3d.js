@@ -67,6 +67,36 @@ const FACTIONS = {
 
 export const FACTION_KEYS = Object.keys(FACTIONS);
 
+// What a piece IS in chess terms -- the thing a learner who has never seen
+// these armies needs to read first. The army's own name for the unit is
+// secondary, so the tooltip leads with "Queen" and follows with "Angel".
+const ROLE_NAMES = { p: "Pawn", n: "Knight", b: "Bishop", r: "Rook", q: "Queen", k: "King" };
+
+const UNIT_LABELS = {
+  pikeman: "Pikeman", cavalier: "Cavalier", griffin: "Griffin", crusader: "Crusader", angel: "Angel", archangel: "Archangel",
+  centaur: "Centaur", pegasus: "Pegasus", woodelf: "Wood Elf", dendroid: "Dendroid", unicorn: "Unicorn", golddragon: "Gold Dragon",
+  gremlin: "Gremlin", gargoyle: "Gargoyle", mage: "Mage", golem: "Golem", naga: "Naga", titan: "Titan",
+  imp: "Imp", hellhound: "Hell Hound", efreet: "Efreet", pitfiend: "Pit Fiend", demon: "Demon", devil: "Devil",
+  skeleton: "Skeleton", wight: "Wight", lich: "Lich", zombie: "Zombie", vampire: "Vampire", bonedragon: "Bone Dragon",
+  troglodyte: "Troglodyte", harpy: "Harpy", medusa: "Medusa", minotaur: "Minotaur", manticore: "Manticore", blackdragon: "Black Dragon",
+  goblin: "Goblin", wolfrider: "Wolf Rider", ogremage: "Ogre Mage", cyclops: "Cyclops", thunderbird: "Thunderbird", behemoth: "Behemoth",
+  gnoll: "Gnoll", dragonfly: "Dragonfly", lizardman: "Lizardman", gorgon: "Gorgon", wyvern: "Wyvern", hydra: "Hydra",
+  pixie: "Pixie", airelemental: "Air Elemental", fireelemental: "Fire Elemental", earthelemental: "Earth Elemental",
+  psychicelemental: "Psychic Elemental", phoenix: "Phoenix",
+};
+
+// Everything a tooltip needs to say about the piece on `square`.
+export function describePiece(piece, factionKey) {
+  const faction = FACTIONS[factionKey] || FACTIONS.castle;
+  const unitKey = faction.mod.UNITS[piece.type];
+  return {
+    role: ROLE_NAMES[piece.type],
+    unit: UNIT_LABELS[unitKey] || unitKey,
+    army: faction.label,
+    side: piece.color === "w" ? "white" : "black",
+  };
+}
+
 export function factionLabel(key) {
   return FACTIONS[key].label;
 }
@@ -274,11 +304,19 @@ function buildBoard(scene) {
 export class Board3D {
   constructor(
     container,
-    { orientation = "white", onMove = () => {}, factions = { w: "castle", b: "stronghold" } } = {}
+    {
+      orientation = "white",
+      onMove = () => {},
+      onHover = () => {},
+      factions = { w: "castle", b: "stronghold" },
+    } = {}
   ) {
     this.container = container;
     this.orientation = orientation;
     this.onMove = onMove;
+    // Called with { square, role, unit, army, side, clientX, clientY } while
+    // the pointer rests on a piece, and with null when it leaves one.
+    this.onHover = onHover;
     this.factions = factions;
     this.interactive = false;
     this.selected = null;
@@ -288,8 +326,15 @@ export class Board3D {
     // compared against `boardState` on every setPosition so only the
     // squares that changed get rebuilt, not all 32 (finding 2).
     this._lastSyncedState = {};
+    // Hover is resolved in the render loop, not per mouse event: a pointer
+    // can emit hundreds of moves a second and a recursive raycast against
+    // every piece each time would be wasted work between frames.
+    this._pendingHover = null;
+    this._hoveredSquare = null;
 
     this._onClick = this._onClick.bind(this);
+    this._onPointerMove = this._onPointerMove.bind(this);
+    this._onPointerLeave = this._onPointerLeave.bind(this);
     this._onResize = this._onResize.bind(this);
     this._animate = this._animate.bind(this);
 
@@ -344,6 +389,8 @@ export class Board3D {
     this.renderer.toneMappingExposure = 1.0;
     this.container.appendChild(this.renderer.domElement);
     this.renderer.domElement.addEventListener("click", this._onClick);
+    this.renderer.domElement.addEventListener("pointermove", this._onPointerMove);
+    this.renderer.domElement.addEventListener("pointerleave", this._onPointerLeave);
 
     // Metallic armor and gold trim need something to reflect; a neutral
     // room environment gives them highlights without any texture files.
@@ -482,25 +529,71 @@ export class Board3D {
     delete this.pieceMeshes[square];
   }
 
-  _onClick(event) {
-    if (!this.interactive) return;
+  // The square under a client-space point, or null. Shared by click and
+  // hover so the two can never disagree about what the pointer is on.
+  //
+  // Recursive: a piece is a plinth plus a nested Group of unit geometry, and
+  // a Group has nothing to hit. A non-recursive cast against the direct
+  // children only ever found the plinth, so clicking a unit's body did
+  // nothing -- the one interaction the whole board exists for.
+  _squareAt(clientX, clientY, { piecesOnly = false } = {}) {
     const rect = this.renderer.domElement.getBoundingClientRect();
-    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
-
-    // Recursive: a piece is a plinth plus a nested Group of unit geometry, and
-    // a Group has nothing to hit. A non-recursive cast against the direct
-    // children only ever found the plinth, so clicking a unit's body did
-    // nothing -- the one interaction the whole board exists for.
-    const pickables = [...Object.values(this.pieceMeshes), ...Object.values(this.squareMeshes)];
+    const pickables = piecesOnly
+      ? Object.values(this.pieceMeshes)
+      : [...Object.values(this.pieceMeshes), ...Object.values(this.squareMeshes)];
     const hits = this.raycaster.intersectObjects(pickables, true);
-    if (!hits.length) return;
-
+    if (!hits.length) return null;
     let obj = hits[0].object;
     while (obj && !obj.userData.square) obj = obj.parent;
-    if (!obj) return;
-    this._handleSquareClick(obj.userData.square);
+    return obj ? obj.userData.square : null;
+  }
+
+  _onClick(event) {
+    if (!this.interactive) return;
+    const square = this._squareAt(event.clientX, event.clientY);
+    if (square) this._handleSquareClick(square);
+  }
+
+  // Hover works whether or not the board is interactive: in Learning Mode
+  // you choose from cards, but you still want to know what you're looking at.
+  _onPointerMove(event) {
+    this._pendingHover = { clientX: event.clientX, clientY: event.clientY };
+  }
+
+  _onPointerLeave() {
+    this._pendingHover = null;
+    this._setHovered(null, null);
+  }
+
+  _resolveHover() {
+    const p = this._pendingHover;
+    if (!p) return;
+    this._pendingHover = null;
+    const square = this._squareAt(p.clientX, p.clientY, { piecesOnly: true });
+    this._setHovered(square, p);
+  }
+
+  _setHovered(square, point) {
+    if (square === this._hoveredSquare && square === null) return;
+    this._hoveredSquare = square;
+    if (!square) {
+      this.onHover(null);
+      return;
+    }
+    const piece = this.boardState[square];
+    if (!piece) {
+      this.onHover(null);
+      return;
+    }
+    this.onHover({
+      square,
+      ...describePiece(piece, this.factions[piece.color]),
+      clientX: point.clientX,
+      clientY: point.clientY,
+    });
   }
 
   _handleSquareClick(square) {
@@ -573,6 +666,7 @@ export class Board3D {
   _animate() {
     this._animationFrame = requestAnimationFrame(this._animate);
     this.controls.update();
+    this._resolveHover();
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -581,6 +675,9 @@ export class Board3D {
     window.removeEventListener("resize", this._onResize);
     if (this._resizeObserver) this._resizeObserver.disconnect();
     this.renderer.domElement.removeEventListener("click", this._onClick);
+    this.renderer.domElement.removeEventListener("pointermove", this._onPointerMove);
+    this.renderer.domElement.removeEventListener("pointerleave", this._onPointerLeave);
+    this.onHover(null);
     this.controls.dispose();
 
     // The scene's own GPU resources -- board square geometry/materials,

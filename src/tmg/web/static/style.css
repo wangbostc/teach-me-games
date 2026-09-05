@@ -252,6 +252,40 @@ main {
   box-shadow: none;
 }
 
+/* -- Piece tooltip: chess role first, army's unit name second ------------- */
+
+.piece-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  pointer-events: none;
+  padding: 0.4rem 0.65rem 0.45rem;
+  border-radius: 6px;
+  background: rgba(42, 36, 32, 0.9);
+  border: 1px solid rgba(246, 241, 231, 0.2);
+  color: var(--parchment);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+}
+
+.piece-tip-role {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1rem;
+  line-height: 1.15;
+}
+
+.piece-tip-unit {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  color: rgba(246, 241, 231, 0.72);
+  margin-top: 0.1rem;
+}
+
 /* -- View controls, tucked into the stage's top-right corner ------------ */
 
 .board-tools {

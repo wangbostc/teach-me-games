@@ -225,6 +225,7 @@ function startGame() {
     board3d = new Board3D(document.getElementById("board3d"), {
       orientation: userColor,
       onMove: playMove,
+      onHover: showPieceTip,
       factions: factions,
     });
     board3d.setPosition(data.fen);
@@ -236,6 +237,30 @@ function startGame() {
       renderOptions();
     }
   });
+}
+
+// -- Hover tooltip: what IS this piece? --------------------------------------
+
+// Leads with the chess role, because that is what someone who has never
+// seen these armies needs; the unit and army are the second line. Follows
+// the cursor, kept inside the stage so it never gets clipped at an edge.
+function showPieceTip(info) {
+  const tip = document.getElementById("piece-tip");
+  if (!info) {
+    tip.hidden = true;
+    return;
+  }
+  tip.querySelector(".piece-tip-role").textContent = info.role;
+  tip.querySelector(".piece-tip-unit").textContent = `${info.unit} \u00b7 ${info.army}`;
+  tip.hidden = false;
+
+  const stage = document.getElementById("board3d").getBoundingClientRect();
+  const pad = 14;
+  let x = info.clientX - stage.left + pad;
+  let y = info.clientY - stage.top - tip.offsetHeight - pad;
+  if (x + tip.offsetWidth > stage.width - 8) x = info.clientX - stage.left - tip.offsetWidth - pad;
+  if (y < 8) y = info.clientY - stage.top + pad;
+  tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
 }
 
 // -- View controls: lock, reset, fullscreen ---------------------------------
