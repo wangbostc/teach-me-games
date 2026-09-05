@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from tmg.engine.protocol import Analysis
 from tmg.engine.stockfish import (
     DEFAULT_MULTIPV,
     DEFAULT_NODES,
@@ -250,6 +251,34 @@ def make_move(req: MoveRequest) -> dict:
     }
 
 
+def _learner_analysis(board: chess.Board) -> Analysis:
+    """Caller must hold `_state_lock`. Shared by get_options and
+    get_option_explanations so one Stockfish search serves both halves of a
+    Learning Mode turn (finding 8): each used to run its own
+    _learner_engine.analyse() over the identical position -- ~0.66s
+    duplicated on every turn -- and two independent searches could rank
+    candidates differently, so the prose could describe an ordering the
+    struct never showed. Cached on the session keyed by the exact FEN
+    searched: the learner engine carries no skill_level, so it is fully
+    reproducible (docs/ENGINE_PIN.md), and any move changes the FEN (at
+    minimum halfmove/fullmove counters), so a stale entry can never match --
+    invalidation falls out of the cache key, nothing to track separately.
+    Both callers already hold `_state_lock` across this, so there is no
+    race between the cache check and the search it guards. Takes the board
+    to search explicitly (rather than reaching for `_session.board` itself)
+    because get_option_explanations searches a `.copy()` it goes on to use
+    after the lock is released -- the exact same position either way, so
+    the cache key (its FEN) agrees regardless of which caller passes it.
+    """
+    assert _session is not None and _learner_engine is not None
+    fen = board.fen()
+    analysis = _session.cached_analysis(fen)
+    if analysis is None:
+        analysis = _learner_engine.analyse(board)
+        _session.cache_analysis(fen, analysis)
+    return analysis
+
+
 @app.get("/api/game/options")
 def get_options() -> dict:
     """The instant half of a Learning Mode turn (docs/PLAN.md section 7):
@@ -262,9 +291,8 @@ def get_options() -> dict:
             raise HTTPException(400, "learning mode is not active")
         if _session.is_over or not _session.is_user_turn:
             raise HTTPException(400, "not the user's turn")
-        assert _learner_engine is not None
 
-        analysis = _learner_engine.analyse(_session.board)
+        analysis = _learner_analysis(_session.board)
         options = explain.build_struct_options(_session.board, analysis.candidates)
 
     return {"options": options}
@@ -273,25 +301,22 @@ def get_options() -> dict:
 @app.get("/api/game/options/explanations")
 def get_option_explanations() -> dict:
     """The slow, validated half of a Learning Mode turn: same candidates as
-    get_options, but with `claude -p`'s narration, which can take up to
-    CLAUDE_TIMEOUT_SECONDS. The lock is held only long enough to validate
-    state and run the (fast, deterministic) engine search -- NOT across the
-    LLM call -- so a slow or unavailable explanation never blocks move
-    submission, a new game, or the struct-only endpoint above. This mirrors
-    get_options's guards and re-runs the same deterministic search (the
-    learner engine carries no skill_level, so it is fully reproducible;
-    see docs/ENGINE_PIN.md) rather than caching candidates across requests,
-    which would need its own invalidation story under concurrent moves.
+    get_options (the same cached Analysis, in fact -- see
+    _learner_analysis), but with `claude -p`'s narration, which can take up
+    to CLAUDE_TIMEOUT_SECONDS. The lock is held only long enough to
+    validate state and get that analysis (a cache hit is instant; a miss
+    runs the fast, deterministic engine search) -- NOT across the LLM call
+    -- so a slow or unavailable explanation never blocks move submission, a
+    new game, or the struct-only endpoint above.
     """
     with _state_lock:
         if _session is None or not _session.learning_mode:
             raise HTTPException(400, "learning mode is not active")
         if _session.is_over or not _session.is_user_turn:
             raise HTTPException(400, "not the user's turn")
-        assert _learner_engine is not None
-        learner_engine = _learner_engine
+
         board = _session.board.copy()
-        analysis = learner_engine.analyse(board)
+        analysis = _learner_analysis(board)
 
     explanations = explain.build_explanations(board, analysis.candidates)
     return {"explanations": explanations}
