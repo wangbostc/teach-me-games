@@ -35,7 +35,7 @@ import * as dungeon from "/static/units/dungeon.js";
 import * as stronghold from "/static/units/stronghold.js";
 import * as fortress from "/static/units/fortress.js";
 import * as conflux from "/static/units/conflux.js";
-import { wood, stone, burnishedGold } from "/static/units/materials.js";
+import { wood, stone, burnishedGold, disposeTextureCache } from "/static/units/materials.js";
 import { fitToRole } from "/static/units/common.js";
 
 const FILES = "abcdefgh";
@@ -69,6 +69,17 @@ export const FACTION_KEYS = Object.keys(FACTIONS);
 
 export function factionLabel(key) {
   return FACTIONS[key].label;
+}
+
+// Gates the console/debug hooks below (window.__tmgBoard, reviewRank) so
+// they only exist on an explicit opt-in, not on every page load (finding
+// 9). Same query-string convention units/preview.html already uses.
+function devHooksEnabled() {
+  try {
+    return new URLSearchParams(window.location.search).has("dev");
+  } catch {
+    return false;
+  }
 }
 
 function squareToWorld(square) {
@@ -237,6 +248,10 @@ export class Board3D {
     this.selected = null;
     this.boardState = {};
     this.pieceMeshes = {};
+    // The occupancy _syncPieceMeshes last actually built meshes for --
+    // compared against `boardState` on every setPosition so only the
+    // squares that changed get rebuilt, not all 32 (finding 2).
+    this._lastSyncedState = {};
 
     this._onClick = this._onClick.bind(this);
     this._onResize = this._onResize.bind(this);
@@ -251,8 +266,13 @@ export class Board3D {
     this._resizeObserver = new ResizeObserver(this._onResize);
     this._resizeObserver.observe(this.container);
     requestAnimationFrame(this._animate);
-    // Dev hook: lets a console (or a review script) reposition the camera.
-    window.__tmgBoard = this;
+    // Dev hook: lets a console (or a review script) reposition the camera
+    // via reviewRank() below. Gated behind ?dev=1 (the same query-string
+    // convention units/preview.html already uses) so a plain page load
+    // never carries a live reference to its own board on `window` -- one
+    // that used to survive dispose() and keep a "disposed" board (and
+    // everything it retains) reachable forever (finding 9).
+    if (devHooksEnabled()) window.__tmgBoard = this;
   }
 
   // Frame a close review view of one rank -- `rank` 1 shows white's back
@@ -485,9 +505,41 @@ export class Board3D {
     if (this._resizeObserver) this._resizeObserver.disconnect();
     this.renderer.domElement.removeEventListener("click", this._onClick);
     this.controls.dispose();
+
+    // The scene's own GPU resources -- board square geometry/materials,
+    // the frame, the desk, and whichever piece meshes are still live --
+    // were never freed here before, only the renderer/controls were. Since
+    // app.js disposes and rebuilds a whole Board3D per game, every one of
+    // those was a full board's worth of VRAM stranded on every new game
+    // (finding 1). A single scene-wide traversal disposes all of it,
+    // exactly the pattern _syncPieceMeshes already used per-piece.
+    this.scene.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        materials.forEach((mat) => mat.dispose());
+      }
+    });
+    // The room environment map (PMREMGenerator's output) is its own GPU
+    // texture, separate from the object graph traverse() just walked.
+    if (this.scene.environment) this.scene.environment.dispose();
+    this.pieceMeshes = {};
+    this.squareMeshes = {};
+    this._lastSyncedState = {};
+    // Texture MAPS (wood grain, brushed metal, ...) are shared across many
+    // materials via materials.js's own cache and are NOT freed by a
+    // material's dispose() above -- see that module's header comment. Free
+    // the cache itself, once, here. Safe because app.js never runs two
+    // Board3D instances at once (dispose-then-construct per game), so
+    // nothing else can be depending on these textures while this runs.
+    disposeTextureCache();
+
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement === this.container) {
       this.container.removeChild(this.renderer.domElement);
     }
+    // A disposed board must not stay reachable from a live global -- see
+    // devHooksEnabled's assignment in the constructor (finding 9).
+    if (window.__tmgBoard === this) window.__tmgBoard = null;
   }
 }

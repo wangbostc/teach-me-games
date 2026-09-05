@@ -11,6 +11,17 @@ import * as THREE from "three";
 
 const textureCache = new Map();
 
+// The cache above is the one GPU resource this module owns that outlives
+// any single material -- a texture here is referenced by many materials
+// across many pieces, so disposing it must happen exactly once, from
+// outside, once nothing needs the cache anymore, rather than each material
+// disposing a map it merely borrowed. Board3D.dispose() calls this once per
+// game (finding 1); nothing else in this module should call it.
+export function disposeTextureCache() {
+  for (const texture of textureCache.values()) texture.dispose();
+  textureCache.clear();
+}
+
 function canvas(size) {
   const c = document.createElement("canvas");
   c.width = c.height = size;
