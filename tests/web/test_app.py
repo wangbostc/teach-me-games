@@ -361,6 +361,7 @@ def test_options_endpoint_returns_the_struct_with_no_llm_call_at_all(client, mon
     options = resp.json()["options"]
     assert len(options) == 1  # _FakeEngine.analyse returns exactly one candidate
     assert "uci" in options[0] and "move_text" in options[0] and "eval_text" in options[0]
+    assert "eval_bucket" in options[0]  # structured field app.js keys its colour off (finding 7)
     assert "explanation" not in options[0]  # prose is a separate, later call
 
 

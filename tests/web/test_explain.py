@@ -47,6 +47,10 @@ def test_build_struct_options_never_calls_claude(monkeypatch):
     by_uci = {o["uci"]: o for o in options}
     assert by_uci["e2e4"]["move_text"] == "e2 to e4"  # plain squares, never SAN
     assert "good for you" in by_uci["e2e4"]["eval_text"]
+    # A structured field alongside eval_text (finding 7): app.js keys the
+    # option card's colour off this bare token, not off a substring search
+    # over eval_text's prose.
+    assert by_uci["e2e4"]["eval_bucket"] == "good"
     assert "explanation" not in by_uci["e2e4"]  # struct-only, no prose field at all
 
 
@@ -58,6 +62,7 @@ def test_build_struct_options_never_fabricates_an_eval_when_the_engine_gave_none
     empty = (Candidate(0, "e2e4", None, None, ("e2e4",)),)
     options = explain.build_struct_options(chess.Board(), empty)
     assert options[0]["eval_text"] == "?"
+    assert options[0]["eval_bucket"] == "unknown"
 
 
 def test_well_formed_response_is_used_verbatim(monkeypatch):

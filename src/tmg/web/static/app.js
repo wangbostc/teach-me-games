@@ -61,12 +61,16 @@ function maybeFetchReport(gameOver) {
   });
 }
 
-// A move's own eval_text already says "good for you" / "bad for you" / "even"
-// (see tmg.web.explain._eval_text) -- reused here only to pick the option
-// card's edge-tab color, never re-derived or restated as a number of our own.
-function evalClass(evalText) {
-  if (evalText.indexOf("bad for you") !== -1) return "eval-bad";
-  if (evalText.indexOf("even") !== -1) return "eval-even";
+// The server sends eval_bucket alongside eval_text -- one of "good"/"bad"/
+// "even"/"unknown", computed by tmg.report.render.eval_bucket (the same
+// function tmg.web.explain uses to build eval_text's prose). Keyed off
+// here directly rather than string-matching eval_text's rendered sentence,
+// so a wording change to that sentence can never silently break (or the
+// comment that used to point at it, tmg.web.explain._eval_text, silently
+// go stale -- both were finding 7).
+function cardClassForEvalBucket(evalBucket) {
+  if (evalBucket === "bad") return "eval-bad";
+  if (evalBucket === "even") return "eval-even";
   return "";
 }
 
@@ -100,7 +104,7 @@ function renderOptions() {
     const cardsByUci = {};
     data.options.forEach((option) => {
       const div = document.createElement("div");
-      div.className = "option-card loading " + evalClass(option.eval_text);
+      div.className = "option-card loading " + cardClassForEvalBucket(option.eval_bucket);
       // option.move_text and option.eval_text are our own rendered text.
       // The explanation text node (filled in below, once it arrives) will
       // hold claude-generated prose -- the one place in this app where
