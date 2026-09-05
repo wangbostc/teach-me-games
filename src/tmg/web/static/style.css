@@ -30,7 +30,7 @@ html {
 
 body {
   margin: 0;
-  padding: 2.5rem 1.5rem 4rem;
+  padding: 1.1rem 1.5rem 2rem;
   background: var(--parchment);
   color: var(--ink);
   font-family: var(--font-body);
@@ -39,7 +39,7 @@ body {
 }
 
 main {
-  max-width: 1180px;
+  max-width: 1720px;
   margin: 0 auto;
 }
 
@@ -49,15 +49,20 @@ main {
 
 /* -- Masthead -------------------------------------------------------- */
 
+/* Wordmark and tagline share one slim line: every pixel of header height
+   is a pixel the board can't have. */
 .masthead {
-  max-width: 1180px;
-  margin: 0 auto 2rem;
+  max-width: 1720px;
+  margin: 0 auto 0.6rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.9rem;
 }
 
 .wordmark {
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 2.1rem;
+  font-size: 1.7rem;
   letter-spacing: -0.01em;
   margin: 0;
   color: var(--felt);
@@ -190,10 +195,13 @@ main {
 /* -- Game layout: board beside its notebook, like a diagram beside its
       commentary in a chess primer. -------------------------------------- */
 
+/* A square board can't fill a wide window, so it sits centred, with the
+   Learning Mode notebook (when there is one) taking the space beside it. */
 .game-layout {
   display: flex;
   gap: 1.75rem;
   align-items: flex-start;
+  justify-content: center;
   flex-wrap: wrap;
 }
 
@@ -204,10 +212,19 @@ main {
 }
 
 .board-stage {
-  /* The board is the whole point of the page; give it the room a real one
-     takes on a desk. Learning Mode's cards wrap beneath it on narrow screens. */
-  width: 720px;
-  max-width: 100%;
+  /* The board is the whole point of the page, so it is sized to the WINDOW:
+     a square as tall as the viewport allows once the header and status line
+     are accounted for, capped by the available width so it never overflows
+     sideways. A fixed pixel size was either too small on a big screen or ran
+     off the bottom of a small one -- both of which this has done. */
+  --chrome: 112px;
+  /* Both arms in viewport units on purpose. This is a flex item's child, and
+     a percentage width here means "a percentage of a parent that is itself
+     sized by me" -- a cycle the browser breaks by falling back to a stale
+     size. 100vw minus the page's horizontal padding is the same bound,
+     expressed without the cycle. */
+  width: min(calc(100vh - var(--chrome)), calc(100vw - 3rem));
+  min-width: 320px;
   aspect-ratio: 1 / 1;
   border-radius: 8px;
   overflow: hidden;
@@ -229,8 +246,10 @@ main {
   color: var(--felt);
 }
 
+/* Lives in the header row, pushed to the right, so it costs the board no
+   vertical space. */
 .matchup-line {
-  margin: 0 0 0.5rem;
+  margin: 0 0 0 auto;
   font-family: var(--font-display);
   font-style: italic;
   color: var(--ink-soft);
@@ -239,6 +258,13 @@ main {
 .notebook {
   flex: 1 1 280px;
   min-width: 260px;
+  max-width: 560px;
+}
+
+/* In free play the notebook holds nothing; don't let an empty aside claim
+   half the row and shove the board off-centre. */
+.notebook:has(> [hidden]) {
+  display: none;
 }
 
 /* -- Option cards: the signature element. Styled like an index card from

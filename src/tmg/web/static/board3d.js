@@ -206,6 +206,12 @@ export class Board3D {
 
     this._initScene();
     window.addEventListener("resize", this._onResize);
+    // The stage is sized in CSS from the viewport (100vh) and from whatever
+    // the Learning Mode cards leave beside it, so its size can change without
+    // a window resize event -- and it may not have settled when the first
+    // frame is drawn. Observe the container itself.
+    this._resizeObserver = new ResizeObserver(this._onResize);
+    this._resizeObserver.observe(this.container);
     requestAnimationFrame(this._animate);
     // Dev hook: lets a console (or a review script) reposition the camera.
     window.__tmgBoard = this;
@@ -438,6 +444,7 @@ export class Board3D {
   dispose() {
     cancelAnimationFrame(this._animationFrame);
     window.removeEventListener("resize", this._onResize);
+    if (this._resizeObserver) this._resizeObserver.disconnect();
     this.renderer.domElement.removeEventListener("click", this._onClick);
     this.controls.dispose();
     this.renderer.dispose();
