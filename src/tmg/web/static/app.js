@@ -23,6 +23,9 @@ function showReport(text) {
   const section = document.getElementById("report");
   section.hidden = false;
   document.getElementById("report-text").textContent = text;
+  // The report sits outside #game, so it would be invisible behind a
+  // fullscreen board. The game is over; give the screen back.
+  if (document.fullscreenElement) document.exitFullscreen();
 }
 
 function showStartError(message) {
@@ -244,14 +247,24 @@ function startGame() {
 // Leads with the chess role, because that is what someone who has never
 // seen these armies needs; the unit and army are the second line. Follows
 // the cursor, kept inside the stage so it never gets clipped at an edge.
+let lastTipSquare = null;
+
 function showPieceTip(info) {
   const tip = document.getElementById("piece-tip");
   if (!info) {
     tip.hidden = true;
+    lastTipSquare = null;
     return;
   }
-  tip.querySelector(".piece-tip-role").textContent = info.role;
-  tip.querySelector(".piece-tip-unit").textContent = `${info.unit} \u00b7 ${info.army}`;
+  // Rewrite the text only when the piece under the pointer actually
+  // changes. This is an aria-live region: reassigning it every hover frame
+  // makes a screen reader re-announce dozens of times a second while the
+  // pointer merely slides across one piece. Position still updates freely.
+  if (info.square !== lastTipSquare) {
+    tip.querySelector(".piece-tip-role").textContent = info.role;
+    tip.querySelector(".piece-tip-unit").textContent = `${info.unit} \u00b7 ${info.army}`;
+    lastTipSquare = info.square;
+  }
   tip.hidden = false;
 
   const stage = document.getElementById("board3d").getBoundingClientRect();
@@ -287,11 +300,15 @@ function resetView() {
 // square to fill-the-screen (see .board-stage:fullscreen), and the canvas
 // follows through the board's ResizeObserver.
 function toggleFullscreen() {
-  const stage = document.getElementById("board3d");
+  // The whole game area, not just the stage: the option cards, status line
+  // and move-error message are the stage's SIBLINGS, so fullscreening the
+  // stage alone hid them -- and in Learning Mode the cards are the only way
+  // to move a piece.
+  const game = document.getElementById("game");
   if (document.fullscreenElement) {
     document.exitFullscreen();
-  } else if (stage.requestFullscreen) {
-    stage.requestFullscreen();
+  } else if (game.requestFullscreen) {
+    game.requestFullscreen();
   }
 }
 

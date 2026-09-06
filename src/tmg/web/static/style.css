@@ -241,15 +241,27 @@ main {
   cursor: grab;
 }
 
-/* Fullscreen: the stage IS the display. Drop the square constraint and let
-   the 3D view take the full aspect of the screen -- the camera adapts. */
-.board-stage:fullscreen {
+/* Fullscreen puts the whole GAME AREA on screen, not the board alone. The
+   Learning Mode option cards, the status line and the rejected-move message
+   are siblings of the stage; fullscreening just the stage hid all three, and
+   in Learning Mode those cards are the only way to move -- the game became
+   unplayable until you exited. */
+#game:fullscreen {
   width: 100vw;
   height: 100vh;
-  aspect-ratio: auto;
-  min-width: 0;
+  padding: 1rem 1.25rem;
+  background: var(--parchment);
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+/* No page header to leave room for, so the board takes nearly the whole
+   screen height. A screen is wider than it is tall, so the notebook still
+   fits beside it without the flex row wrapping. */
+#game:fullscreen .board-stage {
+  --chrome: 40px;
   border-radius: 0;
-  box-shadow: none;
 }
 
 /* -- Piece tooltip: chess role first, army's unit name second ------------- */

@@ -87,7 +87,13 @@ const UNIT_LABELS = {
 
 // Everything a tooltip needs to say about the piece on `square`.
 export function describePiece(piece, factionKey) {
-  const faction = FACTIONS[factionKey] || FACTIONS.castle;
+  const faction = FACTIONS[factionKey];
+  // buildPieceMesh throws for exactly this input; a tooltip that quietly
+  // said "Castle" over a piece the board refused to build would disagree
+  // with the board about which army it belongs to.
+  if (!faction) {
+    throw new Error(`describePiece: unknown faction ${JSON.stringify(factionKey)}`);
+  }
   const unitKey = faction.mod.UNITS[piece.type];
   return {
     role: ROLE_NAMES[piece.type],
@@ -330,6 +336,7 @@ export class Board3D {
     // can emit hundreds of moves a second and a recursive raycast against
     // every piece each time would be wasted work between frames.
     this._pendingHover = null;
+    this._lastPointer = null;
     this._hoveredSquare = null;
 
     this._onClick = this._onClick.bind(this);
@@ -485,6 +492,11 @@ export class Board3D {
     this.boardState = parseFenPlacement(fen);
     this._syncPieceMeshes();
     this._clearSelection();
+    // In Learning Mode a move is made by clicking a card in the notebook,
+    // so the pointer never re-enters the canvas and no pointermove arrives
+    // to refresh the hover. Without this the tooltip goes on describing a
+    // piece that has just moved off the square under the cursor.
+    if (this._lastPointer) this._pendingHover = this._lastPointer;
   }
 
   // Disposes and rebuilds only the squares whose occupant changed since the
@@ -513,6 +525,10 @@ export class Board3D {
   // whether the occupancy itself changed -- needed only when what a piece
   // LOOKS like has to change (setFactions), never for an ordinary move.
   _rebuildAllPieceMeshes() {
+    // The highlight lives on the old meshes' materials, so a rebuild drops
+    // it while `selected` still points at a square -- leaving the next click
+    // to clear a selection the user can no longer see.
+    this.selected = null;
     Object.keys(this.pieceMeshes).forEach((square) => this._disposePieceMesh(square));
     this._lastSyncedState = {};
     this._syncPieceMeshes();
@@ -560,10 +576,12 @@ export class Board3D {
   // Hover works whether or not the board is interactive: in Learning Mode
   // you choose from cards, but you still want to know what you're looking at.
   _onPointerMove(event) {
-    this._pendingHover = { clientX: event.clientX, clientY: event.clientY };
+    this._lastPointer = { clientX: event.clientX, clientY: event.clientY };
+    this._pendingHover = this._lastPointer;
   }
 
   _onPointerLeave() {
+    this._lastPointer = null;
     this._pendingHover = null;
     this._setHovered(null, null);
   }
@@ -693,6 +711,11 @@ export class Board3D {
         const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
         materials.forEach((mat) => mat.dispose());
       }
+      // A shadow-casting light has neither geometry nor material, but it
+      // does own a render target -- here a 2048x2048 shadow map, plausibly
+      // the largest single allocation on the board. renderer.dispose()
+      // does not free it.
+      if (obj.isLight && obj.shadow) obj.shadow.dispose();
     });
     // The room environment map (PMREMGenerator's output) is its own GPU
     // texture, separate from the object graph traverse() just walked.
