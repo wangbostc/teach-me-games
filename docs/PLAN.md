@@ -898,12 +898,26 @@ bug in tutor backends, and it silently inverts every judgement for one colour.
 
 ### Persistence
 
-- **SQLite.** One user, one machine, no reason for anything else.
+- **MongoDB** (`mongodb://127.0.0.1:27017/`, database `tmg`), for saved play-mode games. This
+  reverses the original entry here — *"**SQLite.** One user, one machine, no reason for anything
+  else"* — which remains the better-argued default on the merits; the reversal is a deliberate
+  product choice, recorded in
+  [`docs/superpowers/specs/2026-09-06-saved-games-and-hotseat-design.md`](superpowers/specs/2026-09-06-saved-games-and-hotseat-design.md).
+  The store sits behind a `GameStore` Protocol (`src/tmg/store/protocol.py`) with one production
+  implementation, so the engine of choice is a swap, not a rewrite. A missing mongod never blocks
+  play: the app degrades to in-memory with save and resume disabled.
+- The puzzle DB (§9, M5) is a separate concern and stays SQLite — a 6M-row CC0 dump filtered on
+  ingest is exactly the workload the original entry was reasoning about.
 - The puzzle dump is ~304 MB compressed / ~1.2–1.4 GB decompressed — filter on ingest (§9) rather than
   storing all 6M rows.
 - **Store a game *tree*, not a move list.** An interactive board with takebacks, "try again" and
   variations is a tree. KaTrain — our cited existence proof — has auto-undo of bad moves in teaching
   mode. Retrofitting a tree onto a PGN string is materially more work than starting with one.
+  **Deferred as of 2026-09-06**, not abandoned: saved play-mode games store `initial_fen` + a
+  mainline `moves` list, because play mode has no takebacks or variations yet and that list *is* the
+  in-memory model (`board.move_stack`). It is a strict subset of a tree, not a PGN string — the
+  artifact this bullet warns about — and `to_pgn_game()` already builds a python-chess tree from it.
+  The day takebacks land, this is a `schema_version` bump.
 - Append-only attempt log from day one (§10 lists the fields). It is the only thing that can't be
   recomputed later.
 
